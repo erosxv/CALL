@@ -22,15 +22,8 @@
     flex-direction: column;
     padding: 20px;
   }
-  #joinScreen h1 {
-    font-size: 28px;
-    margin-bottom: 8px;
-  }
-  #joinScreen p.sub {
-    color: #9aa0a6;
-    margin-bottom: 28px;
-    text-align: center;
-  }
+  #joinScreen h1 { font-size: 28px; margin-bottom: 8px; }
+  #joinScreen p.sub { color: #9aa0a6; margin-bottom: 28px; text-align: center; }
   .card {
     background: #1a1d24;
     border: 1px solid #2a2e37;
@@ -39,13 +32,7 @@
     width: 100%;
     max-width: 380px;
   }
-  .card label {
-    display: block;
-    font-size: 13px;
-    color: #9aa0a6;
-    margin-bottom: 6px;
-    margin-top: 16px;
-  }
+  .card label { display: block; font-size: 13px; color: #9aa0a6; margin-bottom: 6px; margin-top: 16px; }
   .card label:first-child { margin-top: 0; }
   .card input {
     width: 100%;
@@ -88,10 +75,22 @@
   #topbar .roomInfo b { color: #eaeaea; }
   #copyLinkBtn { background: #2a2e37; color: #eaeaea; font-size: 13px; padding: 8px 12px; }
 
+  #mediaBanner {
+    background: #20161a;
+    border-bottom: 1px solid #d64545;
+    padding: 10px 20px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
   #grid {
     flex: 1;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 12px;
     padding: 16px;
     overflow-y: auto;
@@ -104,15 +103,31 @@
     overflow: hidden;
     aspect-ratio: 16/10;
     border: 1px solid #2a2e37;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   .tile video {
     width: 100%;
     height: 100%;
     object-fit: cover;
     background: #000;
-    transform: scaleX(1);
+    display: none;
   }
-  .tile.mine video { transform: scaleX(-1); }
+  .tile video.has-video { display: block; }
+  .tile .avatar {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: #2a2e37;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    font-weight: 700;
+    color: #9aa0a6;
+  }
+  .tile.speaking { border-color: #5b8cff; box-shadow: 0 0 0 2px #5b8cff33; }
   .tile .tag {
     position: absolute;
     left: 10px;
@@ -130,6 +145,16 @@
     padding: 4px 8px;
     border-radius: 8px;
     font-size: 12px;
+    display: none;
+  }
+  .tile .screen-badge {
+    position: absolute;
+    left: 10px;
+    top: 10px;
+    background: rgba(91,140,255,.9);
+    padding: 3px 8px;
+    border-radius: 8px;
+    font-size: 11px;
     display: none;
   }
 
@@ -167,6 +192,8 @@
     border-radius: 10px;
     font-size: 13px;
     display: none;
+    max-width: 90vw;
+    text-align: center;
   }
 </style>
 </head>
@@ -174,7 +201,7 @@
 
 <div id="joinScreen">
   <h1>📞 CallZinha</h1>
-  <p class="sub">Chamada em grupo com tela compartilhada, sem instalar nada</p>
+  <p class="sub">Chamada em grupo por áudio, com tela compartilhada</p>
   <div class="card">
     <label for="nameInput">Seu nome</label>
     <input id="nameInput" placeholder="Ex: João" maxlength="20">
@@ -196,7 +223,6 @@
   <div id="grid"></div>
   <div id="controls">
     <button id="micBtn" class="ctrl-btn active" title="Mutar/desmutar">🎤</button>
-    <button id="camBtn" class="ctrl-btn active" title="Ligar/desligar câmera">📷</button>
     <button id="screenBtn" class="ctrl-btn" title="Compartilhar tela">🖥️</button>
     <button id="leaveBtn" class="ctrl-btn leave" title="Sair">📵</button>
   </div>
@@ -210,22 +236,20 @@ let myName = "";
 let roomId = "";
 let peer = null;
 let isHost = false;
-let localStream = null;
-let screenStream = null;
-let cameraTrack = null;
-let hasMedia = false;
-let pendingMediaError = null;
+let localStream = null;   // stream de ÁUDIO (mic)
+let screenStream = null;  // stream de vídeo (tela), só quando compartilhando
+let hasMic = false;
 const calls = {};       // peerId -> MediaConnection
-const conns = {};       // peerId -> DataConnection (for names / peer-list gossip)
+const conns = {};       // peerId -> DataConnection (nomes / lista de peers)
 const remoteNames = {}; // peerId -> name
-const hostConns = {};   // used only by host: peerId -> DataConnection
+const hostConns = {};   // apenas o host usa: peerId -> DataConnection
 
 function toast(msg) {
   const t = $('toast');
   t.textContent = msg;
   t.style.display = 'block';
   clearTimeout(t._timer);
-  t._timer = setTimeout(() => t.style.display = 'none', 2500);
+  t._timer = setTimeout(() => t.style.display = 'none', 2800);
 }
 
 function randomRoomCode() {
@@ -234,53 +258,24 @@ function randomRoomCode() {
 }
 $('genRoomBtn').onclick = () => { $('roomInput').value = randomRoomCode(); };
 
-// Pre-fill from URL (?room=xxx)
 const urlParams = new URLSearchParams(location.search);
 if (urlParams.get('room')) $('roomInput').value = urlParams.get('room');
 
 $('joinBtn').onclick = joinCall;
-
-function showPermissionHelp(err) {
-  const name = err && err.name;
-  let title, tip;
-
-  if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-    title = "🚫 Permissão de câmera/microfone bloqueada";
-    tip = "Clique no ícone de cadeado 🔒 ao lado do endereço do site (lá em cima) → mude Câmera e Microfone para <b>Permitir</b> → recarregue a página.";
-  } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
-    title = "🎥 Nenhuma câmera/microfone encontrado";
-    tip = "O navegador não achou nenhum dispositivo. Confira se a webcam está conectada corretamente.";
-  } else if (name === 'NotReadableError' || name === 'TrackStartError') {
-    title = "⚠️ Câmera ou microfone em uso";
-    tip = "Outro programa (Zoom, Teams, Meet em outra aba...) já está usando a câmera/microfone. Feche esses programas e tente de novo.";
-  } else {
-    title = "❌ Não consegui acessar câmera/microfone";
-    tip = "Pode ser bloqueio do sistema operacional. No Windows, procure por \"privacidade da câmera\" no menu iniciar e ative \"Permitir que aplicativos de desktop acessem sua câmera\" (e o mesmo para microfone).";
-  }
-
-  $('status').innerHTML =
-    '<div style="text-align:left;background:#20161a;border:1px solid #d64545;border-radius:10px;padding:12px 14px;margin-top:6px;">' +
-    '<b>' + title + '</b><div style="margin-top:6px;color:#eaeaea;font-size:13px;line-height:1.5;">' + tip + '</div></div>' +
-    '<button id="retryPermBtn" class="btn-primary" style="width:100%;margin-top:12px;">🔄 Tentar novamente</button>';
-
-  document.getElementById('retryPermBtn').onclick = joinCall;
-}
 
 async function joinCall() {
   myName = $('nameInput').value.trim() || "Anônimo";
   roomId = $('roomInput').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
   if (!roomId) { $('status').textContent = "Digite ou gere um código de sala."; return; }
 
-  $('status').innerHTML = "Pedindo acesso à câmera/microfone...";
+  $('status').textContent = "Pedindo acesso ao microfone...";
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    cameraTrack = localStream.getVideoTracks()[0];
-    hasMedia = true;
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    hasMic = true;
   } catch (e) {
-    // Não trava a entrada na sala: entra sem câmera/mic e permite ativar depois, de dentro da sala.
+    // Não trava a entrada: entra mudo e permite ativar depois, de dentro da sala.
     localStream = new MediaStream();
-    hasMedia = false;
-    pendingMediaError = e;
+    hasMic = false;
   }
 
   $('status').textContent = "Conectando na sala...";
@@ -288,11 +283,10 @@ async function joinCall() {
 }
 
 function startPeer() {
-  // Try to become the "host" (deterministic id = room name). If taken, join as guest.
   const hostId = "callzinha-" + roomId;
   peer = new Peer(hostId, { debug: 0 });
 
-  peer.on('open', (id) => {
+  peer.on('open', () => {
     isHost = true;
     enterCallUI();
     addLocalTile();
@@ -301,18 +295,15 @@ function startPeer() {
 
   peer.on('error', (err) => {
     if (err.type === 'unavailable-id') {
-      // room already has a host -> join as a guest with random id
       peer = new Peer(undefined, { debug: 0 });
       peer.on('open', () => {
         isHost = false;
         enterCallUI();
         addLocalTile();
         connectToHost(hostId);
-        listenForIncomingCalls();
+        peer.on('call', (call) => acceptCall(call));
       });
-      peer.on('error', (e2) => {
-        $('status').textContent = "Erro de conexão: " + e2.type;
-      });
+      peer.on('error', (e2) => { $('status').textContent = "Erro de conexão: " + e2.type; });
     } else {
       $('status').textContent = "Erro de conexão: " + err.type;
     }
@@ -323,56 +314,43 @@ function enterCallUI() {
   $('joinScreen').style.display = 'none';
   $('callScreen').style.display = 'flex';
   $('roomLabel').textContent = roomId;
-  if (!hasMedia) showMediaBanner();
+  if (!hasMic) showMediaBanner();
 }
 
 function showMediaBanner() {
   if (document.getElementById('mediaBanner')) return;
   const banner = document.createElement('div');
   banner.id = 'mediaBanner';
-  banner.style.cssText = "background:#20161a;border-bottom:1px solid #d64545;padding:10px 20px;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;";
   banner.innerHTML =
-    '<span>⚠️ Você entrou sem câmera/microfone. Os outros participantes conseguem te ver e ouvir normalmente assim que você ativar.</span>' +
-    '<button id="enableMediaBtn" class="btn-primary" style="padding:8px 14px;white-space:nowrap;">🎤 Ativar câmera/mic</button>';
+    '<span>⚠️ Você entrou sem microfone. Os outros conseguem te ouvir assim que você ativar.</span>' +
+    '<button id="enableMediaBtn" class="btn-primary" style="padding:8px 14px;white-space:nowrap;">🎤 Ativar microfone</button>';
   $('callScreen').insertBefore(banner, $('grid'));
-  document.getElementById('enableMediaBtn').onclick = enableMedia;
+  document.getElementById('enableMediaBtn').onclick = enableMic;
 }
 
-async function enableMedia() {
+async function enableMic() {
   const btn = document.getElementById('enableMediaBtn');
   if (btn) { btn.textContent = "Pedindo acesso..."; btn.disabled = true; }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    localStream = stream;
-    cameraTrack = localStream.getVideoTracks()[0];
-    hasMedia = true;
-    micOn = true; camOn = true;
-
-    const localVideo = document.querySelector('#tile-local video');
-    if (localVideo) localVideo.srcObject = localStream;
-
-    // Reconecta chamadas existentes agora com mídia de verdade
-    for (const id in calls) { calls[id].close(); delete calls[id]; }
-    Object.keys(remoteNames).forEach(pid => {
-      if (pid !== peer.id) callPeer(pid, remoteNames[pid]);
-    });
-
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    hasMic = true; micOn = true;
     $('micBtn').textContent = '🎤';
-    $('camBtn').textContent = '📷';
     $('micBtn').classList.add('active'); $('micBtn').classList.remove('off');
-    $('camBtn').classList.add('active'); $('camBtn').classList.remove('off');
+
+    // Reconecta as chamadas já existentes agora com áudio de verdade
+    rebuildAllCalls();
 
     const banner = document.getElementById('mediaBanner');
     if (banner) banner.remove();
-    toast("Câmera e microfone ativados!");
+    toast("Microfone ativado!");
   } catch (e) {
-    if (btn) { btn.textContent = "🎤 Ativar câmera/mic"; btn.disabled = false; }
+    if (btn) { btn.textContent = "🎤 Ativar microfone"; btn.disabled = false; }
     const reasons = {
-      NotAllowedError: "Permissão negada pelo navegador. Clique no cadeado 🔒 ao lado do endereço e permita câmera/microfone.",
-      NotFoundError: "Nenhuma câmera/microfone foi encontrado pelo navegador.",
-      NotReadableError: "Outro programa está usando a câmera/microfone agora."
+      NotAllowedError: "Permissão negada. Clique no cadeado 🔒 ao lado do endereço e permita o microfone.",
+      NotFoundError: "Nenhum microfone foi encontrado pelo navegador.",
+      NotReadableError: "Outro programa está usando o microfone agora."
     };
-    toast(reasons[e.name] || "Não consegui ativar câmera/microfone.");
+    toast(reasons[e.name] || "Não consegui ativar o microfone.");
   }
 }
 
@@ -381,36 +359,44 @@ $('copyLinkBtn').onclick = () => {
   navigator.clipboard.writeText(link).then(() => toast("Link copiado! Manda pra galera 🎉"));
 };
 
+function initials(name) {
+  return (name || "?").trim().slice(0, 2).toUpperCase();
+}
+
 function addLocalTile() {
   const tile = document.createElement('div');
   tile.className = 'tile mine';
   tile.id = 'tile-local';
   const video = document.createElement('video');
   video.autoplay = true; video.muted = true; video.playsInline = true;
-  video.srcObject = localStream;
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar';
+  avatar.textContent = initials(myName);
   const tag = document.createElement('div');
   tag.className = 'tag';
   tag.textContent = myName + " (você)";
-  tile.appendChild(video); tile.appendChild(tag);
+  tile.appendChild(video); tile.appendChild(avatar); tile.appendChild(tag);
   $('grid').appendChild(tile);
   updateCount();
 }
 
-function updateCount() {
-  $('peerCount').textContent = $('grid').children.length;
-}
+function updateCount() { $('peerCount').textContent = $('grid').children.length; }
 
 function addRemoteTile(peerId, name) {
-  if (document.getElementById('tile-' + peerId)) return;
-  const tile = document.createElement('div');
+  let tile = document.getElementById('tile-' + peerId);
+  if (tile) return tile.querySelector('video');
+  tile = document.createElement('div');
   tile.className = 'tile';
   tile.id = 'tile-' + peerId;
   const video = document.createElement('video');
   video.autoplay = true; video.playsInline = true;
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar';
+  avatar.textContent = initials(name);
   const tag = document.createElement('div');
   tag.className = 'tag';
   tag.textContent = name || "Participante";
-  tile.appendChild(video); tile.appendChild(tag);
+  tile.appendChild(video); tile.appendChild(avatar); tile.appendChild(tag);
   $('grid').appendChild(tile);
   updateCount();
   return video;
@@ -422,7 +408,7 @@ function removeRemoteTile(peerId) {
   updateCount();
 }
 
-// ---- HOST logic: accept guest data-connections, keep a roster, broadcast peer list ----
+// ---- HOST: aceita conexões de dados dos convidados, mantém lista, distribui ----
 function listenForGuests() {
   peer.on('connection', (conn) => {
     conn.on('open', () => {
@@ -448,13 +434,11 @@ function broadcastRoster() {
   }
 }
 
-// ---- GUEST logic: connect to host, receive roster, mesh-connect to everyone ----
+// ---- GUEST: conecta no host, recebe lista, conecta com todo mundo (mesh) ----
 function connectToHost(hostId) {
   const conn = peer.connect(hostId, { reliable: true });
   conns[hostId] = conn;
-  conn.on('open', () => {
-    conn.send({ type: 'hello', name: myName });
-  });
+  conn.on('open', () => conn.send({ type: 'hello', name: myName }));
   conn.on('data', (msg) => handleData(hostId, msg));
   callPeer(hostId, myName);
 }
@@ -462,6 +446,7 @@ function connectToHost(hostId) {
 function handleData(fromId, msg) {
   if (msg.type === 'hello') {
     remoteNames[fromId] = msg.name;
+    updateTileName(fromId);
     if (isHost) broadcastRoster();
   } else if (msg.type === 'welcome') {
     remoteNames[fromId] = msg.name;
@@ -486,45 +471,62 @@ function updateTileName(peerId) {
   const tile = document.getElementById('tile-' + peerId);
   if (tile && remoteNames[peerId]) {
     tile.querySelector('.tag').textContent = remoteNames[peerId];
+    tile.querySelector('.avatar').textContent = initials(remoteNames[peerId]);
   }
+}
+
+function outgoingStream() {
+  // Junta áudio do mic (se houver) + vídeo da tela (se estiver compartilhando)
+  const tracks = [];
+  if (localStream) tracks.push(...localStream.getAudioTracks());
+  if (sharingScreen && screenStream) tracks.push(...screenStream.getVideoTracks());
+  return new MediaStream(tracks);
 }
 
 function callPeer(peerId, name) {
   if (calls[peerId] || peerId === peer.id) return;
-  const call = peer.call(peerId, localStream, { metadata: { name: myName } });
+  const call = peer.call(peerId, outgoingStream(), { metadata: { name: myName, sharing: sharingScreen } });
   calls[peerId] = call;
-  call.on('stream', (remoteStream) => {
-    const video = addRemoteTile(peerId, name || remoteNames[peerId]);
-    if (video) video.srcObject = remoteStream;
-  });
-  call.on('close', () => { removeRemoteTile(peerId); delete calls[peerId]; });
-}
-
-function listenForIncomingCalls() {
-  peer.on('call', (call) => acceptCall(call));
+  wireCall(call, name);
 }
 
 function acceptCall(call) {
-  call.answer(localStream);
+  call.answer(outgoingStream());
   calls[call.peer] = call;
   const theirName = (call.metadata && call.metadata.name) || remoteNames[call.peer];
-  call.on('stream', (remoteStream) => {
-    const video = addRemoteTile(call.peer, theirName);
-    if (video) video.srcObject = remoteStream;
-  });
-  call.on('close', () => { removeRemoteTile(call.peer); delete calls[call.peer]; });
-
-  // Host also needs to open a data connection back if guest connected only via call
-  if (isHost && !hostConns[call.peer]) {
-    // handled by 'connection' event too; nothing extra needed here
-  }
+  wireCall(call, theirName);
 }
 
-// ---- Controls ----
-let micOn = true, camOn = true, sharingScreen = false;
+function wireCall(call, name) {
+  call.on('stream', (remoteStream) => {
+    const video = addRemoteTile(call.peer, name || remoteNames[call.peer]);
+    video.srcObject = remoteStream;
+    const hasVideo = remoteStream.getVideoTracks().length > 0;
+    video.classList.toggle('has-video', hasVideo);
+    const tile = document.getElementById('tile-' + call.peer);
+    if (tile) tile.querySelector('.screen-badge')?.remove();
+    if (hasVideo && tile) {
+      const badge = document.createElement('div');
+      badge.className = 'screen-badge';
+      badge.textContent = '🖥️ compartilhando tela';
+      badge.style.display = 'block';
+      tile.appendChild(badge);
+    }
+  });
+  call.on('close', () => { removeRemoteTile(call.peer); delete calls[call.peer]; });
+}
+
+function rebuildAllCalls() {
+  const ids = Object.keys(calls);
+  ids.forEach(id => { calls[id].close(); delete calls[id]; });
+  ids.forEach(id => callPeer(id, remoteNames[id]));
+}
+
+// ---- Controles ----
+let micOn = true, sharingScreen = false;
 
 $('micBtn').onclick = () => {
-  if (!hasMedia) { enableMedia(); return; }
+  if (!hasMic) { enableMic(); return; }
   micOn = !micOn;
   localStream.getAudioTracks().forEach(t => t.enabled = micOn);
   $('micBtn').classList.toggle('active', micOn);
@@ -532,27 +534,19 @@ $('micBtn').onclick = () => {
   $('micBtn').textContent = micOn ? '🎤' : '🔇';
 };
 
-$('camBtn').onclick = () => {
-  if (!hasMedia) { enableMedia(); return; }
-  camOn = !camOn;
-  localStream.getVideoTracks().forEach(t => t.enabled = camOn);
-  $('camBtn').classList.toggle('active', camOn);
-  $('camBtn').classList.toggle('off', !camOn);
-  $('camBtn').textContent = camOn ? '📷' : '🚫';
-};
-
 $('screenBtn').onclick = async () => {
   if (!sharingScreen) {
     try {
       screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
     } catch (e) { return; }
-    const screenTrack = screenStream.getVideoTracks()[0];
-    replaceOutgoingVideoTrack(screenTrack);
-    document.getElementById('tile-local').querySelector('video').srcObject = screenStream;
     sharingScreen = true;
+    const localVideo = document.querySelector('#tile-local video');
+    localVideo.srcObject = screenStream;
+    localVideo.classList.add('has-video');
     $('screenBtn').classList.add('active');
+    rebuildAllCalls();
     toast("Compartilhando sua tela");
-    screenTrack.onended = stopScreenShare;
+    screenStream.getVideoTracks()[0].onended = stopScreenShare;
   } else {
     stopScreenShare();
   }
@@ -560,20 +554,13 @@ $('screenBtn').onclick = async () => {
 
 function stopScreenShare() {
   if (screenStream) screenStream.getTracks().forEach(t => t.stop());
-  replaceOutgoingVideoTrack(cameraTrack || null);
-  document.getElementById('tile-local').querySelector('video').srcObject = localStream;
   sharingScreen = false;
+  const localVideo = document.querySelector('#tile-local video');
+  localVideo.srcObject = null;
+  localVideo.classList.remove('has-video');
   $('screenBtn').classList.remove('active');
-  toast("Voltou pra câmera");
-}
-
-function replaceOutgoingVideoTrack(newTrack) {
-  for (const id in calls) {
-    const pc = calls[id].peerConnection;
-    if (!pc) continue;
-    const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-    if (sender) sender.replaceTrack(newTrack);
-  }
+  rebuildAllCalls();
+  toast("Parou de compartilhar a tela");
 }
 
 $('leaveBtn').onclick = () => {

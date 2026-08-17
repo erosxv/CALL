@@ -127,7 +127,7 @@
     font-weight: 700;
     color: #9aa0a6;
   }
-  .tile.speaking { border-color: #5b8cff; box-shadow: 0 0 0 2px #5b8cff33; }
+  .tile.avatar-tile { }
   .tile .tag {
     position: absolute;
     left: 10px;
@@ -157,6 +157,19 @@
     font-size: 11px;
     display: none;
   }
+  .tile .volbar {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 4px;
+    background: #1a1d24;
+  }
+  .tile .volfill {
+    height: 100%;
+    width: 0%;
+    background: #5b8cff;
+    transition: width .08s linear;
+  }
+  .tile.speaking { border-color: #5b8cff; box-shadow: 0 0 0 2px #5b8cff55; }
 
   #controls {
     display: flex;
@@ -222,7 +235,7 @@
   </div>
   <div id="grid"></div>
   <div id="controls">
-    <button id="micBtn" class="ctrl-btn active" title="Mutar/desmutar">🎤</button>
+    <button id="micBtn" class="ctrl-btn active" title="Mutar/desmutar (tecla M)">🎤</button>
     <button id="screenBtn" class="ctrl-btn" title="Compartilhar tela">🖥️</button>
     <button id="leaveBtn" class="ctrl-btn leave" title="Sair">📵</button>
   </div>
@@ -336,6 +349,7 @@ async function enableMic() {
     hasMic = true; micOn = true;
     $('micBtn').textContent = '🎤';
     $('micBtn').classList.add('active'); $('micBtn').classList.remove('off');
+    attachVolumeMeter(localStream, 'tile-local');
 
     // Reconecta as chamadas já existentes agora com áudio de verdade
     rebuildAllCalls();
@@ -375,9 +389,13 @@ function addLocalTile() {
   const tag = document.createElement('div');
   tag.className = 'tag';
   tag.textContent = myName + " (você)";
-  tile.appendChild(video); tile.appendChild(avatar); tile.appendChild(tag);
+  const volbar = document.createElement('div');
+  volbar.className = 'volbar';
+  volbar.innerHTML = '<div class="volfill"></div>';
+  tile.appendChild(video); tile.appendChild(avatar); tile.appendChild(tag); tile.appendChild(volbar);
   $('grid').appendChild(tile);
   updateCount();
+  if (hasMic) attachVolumeMeter(localStream, 'tile-local');
 }
 
 function updateCount() { $('peerCount').textContent = $('grid').children.length; }
@@ -396,7 +414,10 @@ function addRemoteTile(peerId, name) {
   const tag = document.createElement('div');
   tag.className = 'tag';
   tag.textContent = name || "Participante";
-  tile.appendChild(video); tile.appendChild(avatar); tile.appendChild(tag);
+  const volbar = document.createElement('div');
+  volbar.className = 'volbar';
+  volbar.innerHTML = '<div class="volfill"></div>';
+  tile.appendChild(video); tile.appendChild(avatar); tile.appendChild(tag); tile.appendChild(volbar);
   $('grid').appendChild(tile);
   updateCount();
   return video;
@@ -475,6 +496,39 @@ function updateTileName(peerId) {
   }
 }
 
+// ---- Medidor de volume ----
+let audioCtx = null;
+const volumeLoops = {};
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+function attachVolumeMeter(stream, tileId) {
+  if (!stream.getAudioTracks().length) return;
+  if (volumeLoops[tileId]) { cancelAnimationFrame(volumeLoops[tileId]); delete volumeLoops[tileId]; }
+  const ctx = getAudioCtx();
+  const source = ctx.createMediaStreamSource(stream);
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 512;
+  analyser.smoothingTimeConstant = 0.6;
+  source.connect(analyser);
+  const data = new Uint8Array(analyser.frequencyBinCount);
+
+  function loop() {
+    const tile = document.getElementById(tileId);
+    if (!tile) { delete volumeLoops[tileId]; return; }
+    analyser.getByteFrequencyData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) sum += data[i];
+    const level = Math.min(1, (sum / data.length) / 55);
+    const fill = tile.querySelector('.volfill');
+    if (fill) fill.style.width = (level * 100) + '%';
+    tile.classList.toggle('speaking', level > 0.12);
+    volumeLoops[tileId] = requestAnimationFrame(loop);
+  }
+  loop();
+}
+
 function outgoingStream() {
   // Junta áudio do mic (se houver) + vídeo da tela (se estiver compartilhando)
   const tracks = [];
@@ -512,6 +566,7 @@ function wireCall(call, name) {
       badge.style.display = 'block';
       tile.appendChild(badge);
     }
+    attachVolumeMeter(remoteStream, 'tile-' + call.peer);
   });
   call.on('close', () => { removeRemoteTile(call.peer); delete calls[call.peer]; });
 }
@@ -566,6 +621,17 @@ function stopScreenShare() {
 $('leaveBtn').onclick = () => {
   if (confirm("Sair da chamada?")) location.reload();
 };
+
+// Atalho de teclado: M para mutar/desmutar (funciona enquanto a aba estiver em foco)
+document.addEventListener('keydown', (e) => {
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea') return;
+  if ($('callScreen').style.display !== 'flex') return;
+  if (e.key === 'm' || e.key === 'M') {
+    e.preventDefault();
+    $('micBtn').click();
+  }
+});
 
 window.onbeforeunload = () => { if (peer) peer.destroy(); };
 </script>

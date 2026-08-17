@@ -237,6 +237,25 @@
     max-width: 90vw;
     text-align: center;
   }
+  #noisePanel {
+    position: fixed;
+    bottom: 90px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1a1d24;
+    border: 1px solid #2a2e37;
+    padding: 14px 18px;
+    border-radius: 12px;
+    font-size: 13px;
+    display: none;
+    z-index: 10;
+    width: 260px;
+    text-align: center;
+  }
+  #noisePanel.show { display: block; }
+  #noisePanel label { display: block; color: #9aa0a6; margin-bottom: 8px; }
+  #noisePanel input[type="range"] { width: 100%; accent-color: #22b07d; }
+  #noisePanel .hint { display: flex; justify-content: space-between; font-size: 11px; color: #6b7280; margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -266,13 +285,18 @@
   <div id="controls">
     <button id="micBtn" class="ctrl-btn active" title="Mutar/desmutar (tecla M)">🎤</button>
     <button id="screenBtn" class="ctrl-btn" title="Compartilhar tela">🖥️</button>
-    <button id="noiseBtn" class="ctrl-btn noise-on" title="Filtro de ruído (reduz ruído de fundo do seu microfone)">🔉</button>
+    <button id="noiseBtn" class="ctrl-btn noise-on" title="Filtro de ruído (clique: liga/desliga · duplo clique: ajustar sensibilidade)">🔉</button>
     <button id="leaveBtn" class="ctrl-btn leave" title="Sair">📵</button>
   </div>
   <div style="text-align:center;font-size:11px;color:#6b7280;padding-bottom:10px;background:#14161c;">Atalho: tecla <b>M</b> muta/desmuta</div>
 </div>
 
 <div id="toast"></div>
+<div id="noisePanel">
+  <label for="noiseSensitivity">Sensibilidade do filtro de ruído</label>
+  <input type="range" id="noiseSensitivity" min="1" max="100" value="30">
+  <div class="hint"><span>Capta mais (fraco)</span><span>Corta mais (forte)</span></div>
+</div>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -286,7 +310,11 @@ let micGainNode = null;
 let micVolumePercent = 100; // 0-200%
 let noiseFilterOn = true; // filtro de ruído ligado por padrão
 let noiseHighpass = null;
-let noiseCompressor = null;
+let noiseGateNode = null;
+let noiseGateThreshold = 0.018; // sensibilidade do gate (0 a ~0.1)
+let mixDestination = null;   // destino único onde mic + áudio da tela são misturados
+let screenAudioSource = null;
+let screenAudioGain = null;
 
 function micConstraints() {
   return { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
@@ -616,52 +644,101 @@ function setupMicGainChain(rawStream) {
   const ctx = getAudioCtx();
   const source = ctx.createMediaStreamSource(rawStream);
 
-  // Filtro de ruído: corta graves (zumbido/ventilador) e comprime ruído de fundo constante
+  // 1) Corta zumbido/ronco grave contínuo (ventilador, fiação, batida no fio)
   noiseHighpass = ctx.createBiquadFilter();
   noiseHighpass.type = 'highpass';
+  noiseHighpass.frequency.value = 120;
 
-  noiseCompressor = ctx.createDynamicsCompressor();
-  noiseCompressor.knee.value = 30;
-  noiseCompressor.attack.value = 0.003;
-  noiseCompressor.release.value = 0.25;
+  // 2) Gate de ruído: silencia o mic quando você não está falando (é onde
+  //    ruído de fundo constante mais incomoda) e libera quando detecta voz
+  noiseGateNode = ctx.createScriptProcessor(1024, 1, 1);
+  let envelope = 0;
+  const attackCoef = 0.6;   // reage rápido quando o volume sobe (fala)
+  const releaseCoef = 0.05; // fecha aos poucos quando o volume cai (evita corte seco)
+  noiseGateNode.onaudioprocess = (e) => {
+    const input = e.inputBuffer.getChannelData(0);
+    const output = e.outputBuffer.getChannelData(0);
+    if (!noiseFilterOn) { output.set(input); return; }
+    for (let i = 0; i < input.length; i++) {
+      const level = Math.abs(input[i]);
+      envelope = level > envelope
+        ? envelope + (level - envelope) * attackCoef
+        : envelope + (level - envelope) * releaseCoef;
+      // abaixo do limiar: silencia; perto do limiar: transição suave (sem clique)
+      const gain = envelope >= noiseGateThreshold
+        ? 1
+        : Math.pow(Math.max(envelope / noiseGateThreshold, 0), 3);
+      output[i] = input[i] * gain;
+    }
+  };
 
   micGainNode = ctx.createGain();
   micGainNode.gain.value = micOn ? micVolumePercent / 100 : 0;
 
-  const dest = ctx.createMediaStreamDestination();
+  mixDestination = ctx.createMediaStreamDestination();
 
   source.connect(noiseHighpass);
-  noiseHighpass.connect(noiseCompressor);
-  noiseCompressor.connect(micGainNode);
-  micGainNode.connect(dest);
+  noiseHighpass.connect(noiseGateNode);
+  noiseGateNode.connect(micGainNode);
+  micGainNode.connect(mixDestination);
 
-  micOutputStream = dest.stream;
-  applyNoiseFilterState();
+  micOutputStream = mixDestination.stream;
+}
+
+// Pluga o áudio da tela/aba compartilhada na MESMA saída do microfone,
+// pra sair tudo misturado num único trilho de áudio (mais confiável entre navegadores
+// do que mandar dois trilhos de áudio separados).
+function attachScreenAudio(stream) {
+  detachScreenAudio();
+  const audioTracks = stream.getAudioTracks();
+  if (!audioTracks.length || !mixDestination) return;
+  const ctx = getAudioCtx();
+  const screenAudioStream = new MediaStream(audioTracks);
+  screenAudioSource = ctx.createMediaStreamSource(screenAudioStream);
+  screenAudioGain = ctx.createGain();
+  screenAudioGain.gain.value = 1;
+  screenAudioSource.connect(screenAudioGain);
+  screenAudioGain.connect(mixDestination);
+}
+
+function detachScreenAudio() {
+  if (screenAudioSource) { try { screenAudioSource.disconnect(); } catch (e) {} screenAudioSource = null; }
+  if (screenAudioGain) { try { screenAudioGain.disconnect(); } catch (e) {} screenAudioGain = null; }
 }
 
 function applyNoiseFilterState() {
-  if (!noiseHighpass || !noiseCompressor) return;
-  if (noiseFilterOn) {
-    noiseHighpass.frequency.value = 120;   // corta ruído grave contínuo
-    noiseCompressor.threshold.value = -48; // achata ruído de fundo baixo
-    noiseCompressor.ratio.value = 14;
-  } else {
-    noiseHighpass.frequency.value = 0;     // deixa tudo passar
-    noiseCompressor.threshold.value = 0;
-    noiseCompressor.ratio.value = 1;
-  }
+  // O próprio onaudioprocess já lê noiseFilterOn a cada bloco de áudio,
+  // então só precisamos atualizar a variável — nada mais a fazer aqui.
 }
 
 $('noiseBtn').onclick = () => {
   noiseFilterOn = !noiseFilterOn;
-  applyNoiseFilterState();
   $('noiseBtn').classList.toggle('noise-on', noiseFilterOn);
   $('noiseBtn').textContent = noiseFilterOn ? '🔉' : '🔈';
-  toast(noiseFilterOn ? "Filtro de ruído ativado" : "Filtro de ruído desativado");
+  toast(noiseFilterOn ? "Filtro de ruído ativado" : "Filtro de ruído desativado (clique 2x pra ajustar sensibilidade)");
+};
+
+$('noiseBtn').ondblclick = (e) => {
+  e.preventDefault();
+  $('noisePanel').classList.toggle('show');
+};
+
+// Fecha o painel de sensibilidade se clicar fora dele
+document.addEventListener('click', (e) => {
+  if (e.target.id !== 'noiseBtn' && !$('noisePanel').contains(e.target)) {
+    $('noisePanel').classList.remove('show');
+  }
+});
+
+$('noiseSensitivity').oninput = (e) => {
+  // slider vai de 1 (capta mais / gate fraco) a 100 (corta mais / gate forte)
+  const t = Number(e.target.value) / 100;
+  noiseGateThreshold = 0.004 + t * 0.05;
 };
 
 function outgoingStream() {
-  // Junta áudio do mic (já com ganho aplicado, se houver) + vídeo da tela (se estiver compartilhando)
+  // micOutputStream já sai com mic + áudio da tela (se houver) misturados num só trilho.
+  // Só falta juntar o vídeo da tela, quando estiver compartilhando.
   const tracks = [];
   if (micOutputStream) tracks.push(...micOutputStream.getAudioTracks());
   if (sharingScreen && screenStream) tracks.push(...screenStream.getVideoTracks());
@@ -724,7 +801,7 @@ $('micBtn').onclick = () => {
 $('screenBtn').onclick = async () => {
   if (!sharingScreen) {
     try {
-      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
     } catch (e) { return; }
     sharingScreen = true;
     const localTile = $('tile-local');
@@ -733,8 +810,13 @@ $('screenBtn').onclick = async () => {
     localVideo.classList.add('has-video');
     addFullscreenBtn(localTile, localVideo).classList.add('show');
     $('screenBtn').classList.add('active');
+    attachScreenAudio(screenStream);
     rebuildAllCalls();
-    toast("Compartilhando sua tela");
+    if (screenStream.getAudioTracks().length) {
+      toast("Compartilhando sua tela (com áudio)");
+    } else {
+      toast("Compartilhando sua tela (sem áudio — marque \"Compartilhar áudio\" na janela de seleção pra levar o som junto)");
+    }
     screenStream.getVideoTracks()[0].onended = stopScreenShare;
   } else {
     stopScreenShare();
@@ -743,6 +825,7 @@ $('screenBtn').onclick = async () => {
 
 function stopScreenShare() {
   if (screenStream) screenStream.getTracks().forEach(t => t.stop());
+  detachScreenAudio();
   sharingScreen = false;
   const localVideo = document.querySelector('#tile-local video');
   localVideo.srcObject = null;

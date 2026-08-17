@@ -326,6 +326,44 @@ const conns = {};       // peerId -> DataConnection (nomes / lista de peers)
 const remoteNames = {}; // peerId -> name
 const hostConns = {};   // apenas o host usa: peerId -> DataConnection
 
+// ---- Áudio de alta qualidade ----
+// Por padrão, o navegador negocia o codec Opus com bitrate baixo (perfil de
+// voz, ~32kbps), pensado pra chamada de voz simples. Isso deixa o áudio da
+// tela compartilhada (música, vídeo, jogo etc.) com qualidade ruim. Aqui a
+// gente intercepta o SDP (a "receita" da conexão) antes dele ser aplicado e
+// força um bitrate bem mais alto, com estéreo e correção de erro (FEC), que
+// ajuda a não cortar o áudio quando a internet engasga.
+(function patchOpusBitrate() {
+  const origSetLocalDescription = RTCPeerConnection.prototype.setLocalDescription;
+  RTCPeerConnection.prototype.setLocalDescription = function (description) {
+    if (description && description.sdp) {
+      description = new RTCSessionDescription({
+        type: description.type,
+        sdp: boostOpusBitrate(description.sdp)
+      });
+    }
+    return origSetLocalDescription.call(this, description);
+  };
+})();
+
+function boostOpusBitrate(sdp) {
+  const opusMatch = sdp.match(/a=rtpmap:(\d+) opus\/48000/i);
+  if (!opusMatch) return sdp;
+  const payload = opusMatch[1];
+  // 128kbps é bem acima do padrão e dá pra música/tela com folga; estéreo
+  // ligado; useinbandfec ajuda a recuperar pacotes perdidos sem cortar o som.
+  const newFmtpLine = 'a=fmtp:' + payload +
+    ' minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;maxaveragebitrate=128000;maxplaybackrate=48000\r\n';
+  const fmtpRegex = new RegExp('a=fmtp:' + payload + '[^\\r\\n]*\\r\\n');
+  if (fmtpRegex.test(sdp)) {
+    sdp = sdp.replace(fmtpRegex, newFmtpLine);
+  } else {
+    const rtpmapRegex = new RegExp('(a=rtpmap:' + payload + ' opus\\/48000\\/2\\r\\n)');
+    sdp = sdp.replace(rtpmapRegex, '$1' + newFmtpLine);
+  }
+  return sdp;
+}
+
 function toast(msg) {
   const t = $('toast');
   t.textContent = msg;
@@ -826,7 +864,19 @@ $('micBtn').onclick = () => {
 $('screenBtn').onclick = async () => {
   if (!sharingScreen) {
     try {
-      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: { ideal: 30, max: 30 } },
+        audio: {
+          // Esses três "true" são ótimos pro microfone, mas em áudio de tela
+          // (música, vídeo, som do sistema) eles pioram muito a qualidade —
+          // o navegador tenta "limpar" a voz e acaba distorcendo o som.
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          sampleRate: 48000,
+          channelCount: 2
+        }
+      });
     } catch (e) { return; }
     sharingScreen = true;
     const localTile = $('tile-local');

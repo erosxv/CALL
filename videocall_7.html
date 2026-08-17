@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CallZinha - Chamada em grupo</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f1115;
+    color: #eaeaea;
+    min-height: 100vh;
+  }
+  /* ---- Tela de entrada ---- */
+  #joinScreen {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    padding: 20px;
+  }
+  #joinScreen h1 { font-size: 28px; margin-bottom: 8px; }
+  #joinScreen p.sub { color: #9aa0a6; margin-bottom: 28px; text-align: center; }
+  .card {
+    background: #1a1d24;
+    border: 1px solid #2a2e37;
+    border-radius: 16px;
+    padding: 28px;
+    width: 100%;
+    max-width: 380px;
+  }
+  .card label { display: block; font-size: 13px; color: #9aa0a6; margin-bottom: 6px; margin-top: 16px; }
+  .card label:first-child { margin-top: 0; }
+  .card input {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid #2a2e37;
+    background: #0f1115;
+    color: #eaeaea;
+    font-size: 15px;
+  }
+  .card input:focus { outline: 2px solid #5b8cff; }
+  .row-btns { display: flex; gap: 10px; margin-top: 22px; }
+  button {
+    cursor: pointer;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    padding: 12px 16px;
+    transition: opacity .15s ease;
+  }
+  button:hover { opacity: .88; }
+  button:active { opacity: .7; }
+  .btn-primary { background: #5b8cff; color: white; flex: 1; }
+  .btn-ghost { background: #2a2e37; color: #eaeaea; }
+  #genRoomBtn { width: 100%; margin-top: 6px; }
+  #status { margin-top: 16px; font-size: 13px; color: #9aa0a6; text-align: center; min-height: 18px; }
+
+  /* ---- Tela da chamada ---- */
+  #callScreen { display: none; min-height: 100vh; flex-direction: column; }
+  #topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    background: #14161c;
+    border-bottom: 1px solid #2a2e37;
+  }
+  #topbar .roomInfo { font-size: 14px; color: #9aa0a6; }
+  #topbar .roomInfo b { color: #eaeaea; }
+  #copyLinkBtn { background: #2a2e37; color: #eaeaea; font-size: 13px; padding: 8px 12px; }
+
+  #mediaBanner {
+    background: #20161a;
+    border-bottom: 1px solid #d64545;
+    padding: 10px 20px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  #grid {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    padding: 16px;
+    overflow-y: auto;
+    align-content: start;
+  }
+  .tile {
+    position: relative;
+    background: #14161c;
+    border-radius: 14px;
+    overflow: hidden;
+    aspect-ratio: 16/10;
+    border: 1px solid #2a2e37;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .tile video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    background: #000;
+    display: none;
+  }
+  .tile video.has-video { display: block; }
+  .tile .avatar {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: #2a2e37;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    font-weight: 700;
+    color: #9aa0a6;
+  }
+  .tile.avatar-tile { }
+  .tile .tag {
+    position: absolute;
+    left: 10px;
+    bottom: 10px;
+    background: rgba(0,0,0,.55);
+    padding: 4px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  .tile .vol-control {
+    position: absolute;
+    right: 8px;
+    top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(0,0,0,.55);
+    padding: 4px 8px;
+    border-radius: 8px;
+  }
+  .tile .vol-control span { font-size: 12px; }
+  .tile .vol-control input[type="range"] {
+    width: 60px;
+    accent-color: #5b8cff;
+    cursor: pointer;
+  }
+  .tile .screen-badge {
+    position: absolute;
+    left: 10px;
+    top: 10px;
+    background: rgba(91,140,255,.9);
+    padding: 3px 8px;
+    border-radius: 8px;
+    font-size: 11px;
+    display: none;
+  }
+  .tile .fs-btn {
+    position: absolute;
+    right: 8px;
+    bottom: 12px;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: rgba(0,0,0,.6);
+    color: #eaeaea;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    padding: 0;
+    border: none;
+    cursor: pointer;
+    z-index: 3;
+  }
+  .tile .fs-btn.show { display: flex; }
+  .tile .fs-btn:hover { background: rgba(0,0,0,.8); opacity: 1; }
+  .tile:fullscreen, video:fullscreen { object-fit: contain; background: #000; }
+  .tile .volbar {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 4px;
+    background: #1a1d24;
+  }
+  .tile .volfill {
+    height: 100%;
+    width: 0%;
+    background: #5b8cff;
+    transition: width .08s linear;
+  }
+  .tile.speaking { border-color: #5b8cff; box-shadow: 0 0 0 2px #5b8cff55; }
+
+  #controls {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    padding: 16px;
+    background: #14161c;
+    border-top: 1px solid #2a2e37;
+  }
+  .ctrl-btn {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: #2a2e37;
+    color: #eaeaea;
+    font-size: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+  .ctrl-btn.off { background: #d64545; }
+  .ctrl-btn.active { background: #5b8cff; }
+  .ctrl-btn.leave { background: #d64545; }
+  .ctrl-btn.noise-on { background: #22b07d; }
+  #toast {
+    position: fixed;
+    bottom: 90px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1a1d24;
+    border: 1px solid #2a2e37;
+    padding: 10px 18px;
+    border-radius: 10px;
+    font-size: 13px;
+    display: none;
+    max-width: 90vw;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div id="joinScreen">
+  <h1>📞 CallZinha</h1>
+  <p class="sub">Chamada em grupo por áudio, com tela compartilhada</p>
+  <div class="card">
+    <label for="nameInput">Seu nome</label>
+    <input id="nameInput" placeholder="Ex: João" maxlength="20">
+    <label for="roomInput">Código da sala</label>
+    <input id="roomInput" placeholder="Ex: turma-do-cafe" maxlength="40">
+    <button id="genRoomBtn" class="btn-ghost">🎲 Gerar código novo</button>
+    <div class="row-btns">
+      <button id="joinBtn" class="btn-primary">Entrar na chamada</button>
+    </div>
+    <div id="status"></div>
+  </div>
+</div>
+
+<div id="callScreen">
+  <div id="topbar">
+    <div class="roomInfo">Sala: <b id="roomLabel"></b> &nbsp;•&nbsp; <span id="peerCount">1</span> na chamada</div>
+    <button id="copyLinkBtn">🔗 Copiar link de convite</button>
+  </div>
+  <div id="grid"></div>
+  <div id="controls">
+    <button id="micBtn" class="ctrl-btn active" title="Mutar/desmutar (tecla M)">🎤</button>
+    <button id="screenBtn" class="ctrl-btn" title="Compartilhar tela">🖥️</button>
+    <button id="noiseBtn" class="ctrl-btn noise-on" title="Filtro de ruído (reduz ruído de fundo do seu microfone)">🔉</button>
+    <button id="leaveBtn" class="ctrl-btn leave" title="Sair">📵</button>
+  </div>
+  <div style="text-align:center;font-size:11px;color:#6b7280;padding-bottom:10px;background:#14161c;">Atalho: tecla <b>M</b> muta/desmuta</div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let myName = "";
+let roomId = "";
+let peer = null;
+let isHost = false;
+let localStream = null;   // stream de ÁUDIO bruto do mic
+let micOutputStream = null; // stream já processado (com ganho aplicado) que vai pra chamada
+let micGainNode = null;
+let micVolumePercent = 100; // 0-200%
+let noiseFilterOn = true; // filtro de ruído ligado por padrão
+let noiseHighpass = null;
+let noiseCompressor = null;
+
+function micConstraints() {
+  return { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+}
+let screenStream = null;  // stream de vídeo (tela), só quando compartilhando
+let hasMic = false;
+const calls = {};       // peerId -> MediaConnection
+const conns = {};       // peerId -> DataConnection (nomes / lista de peers)
+const remoteNames = {}; // peerId -> name
+const hostConns = {};   // apenas o host usa: peerId -> DataConnection
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.style.display = 'none', 2800);
+}
+
+function randomRoomCode() {
+  const words = ["sol","lua","rio","mar","luz","paz","voo","cha","bao","gato"];
+  return words[Math.floor(Math.random()*words.length)] + "-" + Math.floor(1000+Math.random()*9000);
+}
+$('genRoomBtn').onclick = () => { $('roomInput').value = randomRoomCode(); };
+
+const urlParams = new URLSearchParams(location.search);
+if (urlParams.get('room')) $('roomInput').value = urlParams.get('room');
+
+$('joinBtn').onclick = joinCall;
+
+async function joinCall() {
+  myName = $('nameInput').value.trim() || "Anônimo";
+  roomId = $('roomInput').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+  if (!roomId) { $('status').textContent = "Digite ou gere um código de sala."; return; }
+
+  $('status').textContent = "Pedindo acesso ao microfone...";
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
+    hasMic = true;
+    setupMicGainChain(localStream);
+  } catch (e) {
+    // Não trava a entrada: entra mudo e permite ativar depois, de dentro da sala.
+    localStream = new MediaStream();
+    hasMic = false;
+  }
+
+  $('status').textContent = "Conectando na sala...";
+  startPeer();
+}
+
+function startPeer() {
+  const hostId = "callzinha-" + roomId;
+  peer = new Peer(hostId, { debug: 0 });
+
+  peer.on('open', () => {
+    isHost = true;
+    enterCallUI();
+    addLocalTile();
+    listenForGuests();
+  });
+
+  peer.on('error', (err) => {
+    if (err.type === 'unavailable-id') {
+      peer = new Peer(undefined, { debug: 0 });
+      peer.on('open', () => {
+        isHost = false;
+        enterCallUI();
+        addLocalTile();
+        connectToHost(hostId);
+        peer.on('call', (call) => acceptCall(call));
+      });
+      peer.on('error', (e2) => { $('status').textContent = "Erro de conexão: " + e2.type; });
+    } else {
+      $('status').textContent = "Erro de conexão: " + err.type;
+    }
+  });
+}
+
+function enterCallUI() {
+  $('joinScreen').style.display = 'none';
+  $('callScreen').style.display = 'flex';
+  $('roomLabel').textContent = roomId;
+  if (!hasMic) showMediaBanner();
+}
+
+function showMediaBanner() {
+  if (document.getElementById('mediaBanner')) return;
+  const banner = document.createElement('div');
+  banner.id = 'mediaBanner';
+  banner.innerHTML =
+    '<span>⚠️ Você entrou sem microfone. Os outros conseguem te ouvir assim que você ativar.</span>' +
+    '<button id="enableMediaBtn" class="btn-primary" style="padding:8px 14px;white-space:nowrap;">🎤 Ativar microfone</button>';
+  $('callScreen').insertBefore(banner, $('grid'));
+  document.getElementById('enableMediaBtn').onclick = enableMic;
+}
+
+async function enableMic() {
+  const btn = document.getElementById('enableMediaBtn');
+  if (btn) { btn.textContent = "Pedindo acesso..."; btn.disabled = true; }
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
+    hasMic = true; micOn = true;
+    setupMicGainChain(localStream);
+    $('micBtn').textContent = '🎤';
+    $('micBtn').classList.add('active'); $('micBtn').classList.remove('off');
+    attachVolumeMeter(localStream, 'tile-local');
+
+    // Reconecta as chamadas já existentes agora com áudio de verdade
+    rebuildAllCalls();
+
+    const banner = document.getElementById('mediaBanner');
+    if (banner) banner.remove();
+    toast("Microfone ativado!");
+  } catch (e) {
+    if (btn) { btn.textContent = "🎤 Ativar microfone"; btn.disabled = false; }
+    const reasons = {
+      NotAllowedError: "Permissão negada. Clique no cadeado 🔒 ao lado do endereço e permita o microfone.",
+      NotFoundError: "Nenhum microfone foi encontrado pelo navegador.",
+      NotReadableError: "Outro programa está usando o microfone agora."
+    };
+    toast(reasons[e.name] || "Não consegui ativar o microfone.");
+  }
+}
+
+$('copyLinkBtn').onclick = () => {
+  const link = location.origin + location.pathname + "?room=" + encodeURIComponent(roomId);
+  navigator.clipboard.writeText(link).then(() => toast("Link copiado! Manda pra galera 🎉"));
+};
+
+function initials(name) {
+  return (name || "?").trim().slice(0, 2).toUpperCase();
+}
+
+// ---- Tela cheia ----
+function addFullscreenBtn(tile, video) {
+  let btn = tile.querySelector('.fs-btn');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.className = 'fs-btn';
+    btn.innerHTML = '⛶';
+    btn.title = 'Tela cheia';
+    btn.onclick = (e) => { e.stopPropagation(); toggleFullscreen(video); };
+    tile.appendChild(btn);
+  }
+  return btn;
+}
+
+function toggleFullscreen(video) {
+  const fsElement = document.fullscreenElement || document.webkitFullscreenElement;
+  if (fsElement) {
+    if (document.exitFullscreen) document.exitFullscreen();
+    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    return;
+  }
+  if (video.requestFullscreen) video.requestFullscreen();
+  else if (video.webkitRequestFullscreen) video.webkitRequestFullscreen();
+  else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen(); // iOS Safari
+}
+
+function addLocalTile() {
+  const tile = document.createElement('div');
+  tile.className = 'tile mine';
+  tile.id = 'tile-local';
+  const video = document.createElement('video');
+  video.autoplay = true; video.muted = true; video.playsInline = true;
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar';
+  avatar.textContent = initials(myName);
+  const tag = document.createElement('div');
+  tag.className = 'tag';
+  tag.textContent = myName + " (você)";
+  const volbar = document.createElement('div');
+  volbar.className = 'volbar';
+  volbar.innerHTML = '<div class="volfill"></div>';
+  const myVolControl = document.createElement('div');
+  myVolControl.className = 'vol-control';
+  myVolControl.title = "Volume da sua própria voz enviada pra chamada";
+  myVolControl.innerHTML = '<span>🎙️</span><input type="range" id="myMicVolSlider" min="0" max="200" value="' + micVolumePercent + '">';
+  myVolControl.querySelector('input').oninput = (e) => {
+    micVolumePercent = Number(e.target.value);
+    if (micGainNode && micOn) micGainNode.gain.value = micVolumePercent / 100;
+  };
+  tile.appendChild(video); tile.appendChild(avatar); tile.appendChild(tag); tile.appendChild(volbar); tile.appendChild(myVolControl);
+  $('grid').appendChild(tile);
+  updateCount();
+  if (hasMic) attachVolumeMeter(localStream, 'tile-local');
+}
+
+function updateCount() { $('peerCount').textContent = $('grid').children.length; }
+
+function addRemoteTile(peerId, name) {
+  let tile = document.getElementById('tile-' + peerId);
+  if (tile) return tile.querySelector('video');
+  tile = document.createElement('div');
+  tile.className = 'tile';
+  tile.id = 'tile-' + peerId;
+  const video = document.createElement('video');
+  video.autoplay = true; video.playsInline = true;
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar';
+  avatar.textContent = initials(name);
+  const tag = document.createElement('div');
+  tag.className = 'tag';
+  tag.textContent = name || "Participante";
+  const volbar = document.createElement('div');
+  volbar.className = 'volbar';
+  volbar.innerHTML = '<div class="volfill"></div>';
+  const volControl = document.createElement('div');
+  volControl.className = 'vol-control';
+  volControl.innerHTML = '<span>🔊</span><input type="range" min="0" max="100" value="100">';
+  volControl.querySelector('input').oninput = (e) => {
+    video.volume = e.target.value / 100;
+  };
+  tile.appendChild(video); tile.appendChild(avatar); tile.appendChild(tag); tile.appendChild(volbar); tile.appendChild(volControl);
+  $('grid').appendChild(tile);
+  updateCount();
+  return video;
+}
+
+function removeRemoteTile(peerId) {
+  const tile = document.getElementById('tile-' + peerId);
+  if (tile) tile.remove();
+  updateCount();
+}
+
+// ---- HOST: aceita conexões de dados dos convidados, mantém lista, distribui ----
+function listenForGuests() {
+  peer.on('connection', (conn) => {
+    conn.on('open', () => {
+      hostConns[conn.peer] = conn;
+      conn.send({ type: 'welcome', name: myName });
+    });
+    conn.on('data', (msg) => handleData(conn.peer, msg));
+    conn.on('close', () => {
+      delete hostConns[conn.peer];
+      broadcastRoster();
+      removeRemoteTile(conn.peer);
+      if (calls[conn.peer]) { calls[conn.peer].close(); delete calls[conn.peer]; }
+    });
+  });
+  peer.on('call', (call) => acceptCall(call));
+}
+
+function broadcastRoster() {
+  const roster = Object.keys(hostConns).concat([peer.id]);
+  const names = Object.assign({ [peer.id]: myName }, remoteNames);
+  for (const id in hostConns) {
+    hostConns[id].send({ type: 'roster', peers: roster.filter(p => p !== id), names });
+  }
+}
+
+// ---- GUEST: conecta no host, recebe lista, conecta com todo mundo (mesh) ----
+function connectToHost(hostId) {
+  const conn = peer.connect(hostId, { reliable: true });
+  conns[hostId] = conn;
+  conn.on('open', () => conn.send({ type: 'hello', name: myName }));
+  conn.on('data', (msg) => handleData(hostId, msg));
+  callPeer(hostId, myName);
+}
+
+function handleData(fromId, msg) {
+  if (msg.type === 'hello') {
+    remoteNames[fromId] = msg.name;
+    updateTileName(fromId);
+    if (isHost) broadcastRoster();
+  } else if (msg.type === 'welcome') {
+    remoteNames[fromId] = msg.name;
+  } else if (msg.type === 'roster') {
+    Object.assign(remoteNames, msg.names);
+    updateTileName(fromId);
+    (msg.peers || []).forEach(pid => {
+      if (pid !== peer.id && !calls[pid]) {
+        callPeer(pid, remoteNames[pid]);
+        if (!conns[pid]) {
+          const c = peer.connect(pid, { reliable: true });
+          conns[pid] = c;
+          c.on('open', () => c.send({ type: 'hello', name: myName }));
+          c.on('data', (m) => handleData(pid, m));
+        }
+      }
+    });
+  }
+}
+
+function updateTileName(peerId) {
+  const tile = document.getElementById('tile-' + peerId);
+  if (tile && remoteNames[peerId]) {
+    tile.querySelector('.tag').textContent = remoteNames[peerId];
+    tile.querySelector('.avatar').textContent = initials(remoteNames[peerId]);
+  }
+}
+
+// ---- Medidor de volume ----
+let audioCtx = null;
+const volumeLoops = {};
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+function attachVolumeMeter(stream, tileId) {
+  if (!stream.getAudioTracks().length) return;
+  if (volumeLoops[tileId]) { cancelAnimationFrame(volumeLoops[tileId]); delete volumeLoops[tileId]; }
+  const ctx = getAudioCtx();
+  const source = ctx.createMediaStreamSource(stream);
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 512;
+  analyser.smoothingTimeConstant = 0.6;
+  source.connect(analyser);
+  const data = new Uint8Array(analyser.frequencyBinCount);
+
+  function loop() {
+    const tile = document.getElementById(tileId);
+    if (!tile) { delete volumeLoops[tileId]; return; }
+    analyser.getByteFrequencyData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) sum += data[i];
+    const level = Math.min(1, (sum / data.length) / 55);
+    const fill = tile.querySelector('.volfill');
+    if (fill) fill.style.width = (level * 100) + '%';
+    tile.classList.toggle('speaking', level > 0.12);
+    volumeLoops[tileId] = requestAnimationFrame(loop);
+  }
+  loop();
+}
+
+function setupMicGainChain(rawStream) {
+  const ctx = getAudioCtx();
+  const source = ctx.createMediaStreamSource(rawStream);
+
+  // Filtro de ruído: corta graves (zumbido/ventilador) e comprime ruído de fundo constante
+  noiseHighpass = ctx.createBiquadFilter();
+  noiseHighpass.type = 'highpass';
+
+  noiseCompressor = ctx.createDynamicsCompressor();
+  noiseCompressor.knee.value = 30;
+  noiseCompressor.attack.value = 0.003;
+  noiseCompressor.release.value = 0.25;
+
+  micGainNode = ctx.createGain();
+  micGainNode.gain.value = micOn ? micVolumePercent / 100 : 0;
+
+  const dest = ctx.createMediaStreamDestination();
+
+  source.connect(noiseHighpass);
+  noiseHighpass.connect(noiseCompressor);
+  noiseCompressor.connect(micGainNode);
+  micGainNode.connect(dest);
+
+  micOutputStream = dest.stream;
+  applyNoiseFilterState();
+}
+
+function applyNoiseFilterState() {
+  if (!noiseHighpass || !noiseCompressor) return;
+  if (noiseFilterOn) {
+    noiseHighpass.frequency.value = 120;   // corta ruído grave contínuo
+    noiseCompressor.threshold.value = -48; // achata ruído de fundo baixo
+    noiseCompressor.ratio.value = 14;
+  } else {
+    noiseHighpass.frequency.value = 0;     // deixa tudo passar
+    noiseCompressor.threshold.value = 0;
+    noiseCompressor.ratio.value = 1;
+  }
+}
+
+$('noiseBtn').onclick = () => {
+  noiseFilterOn = !noiseFilterOn;
+  applyNoiseFilterState();
+  $('noiseBtn').classList.toggle('noise-on', noiseFilterOn);
+  $('noiseBtn').textContent = noiseFilterOn ? '🔉' : '🔈';
+  toast(noiseFilterOn ? "Filtro de ruído ativado" : "Filtro de ruído desativado");
+};
+
+function outgoingStream() {
+  // Junta áudio do mic (já com ganho aplicado, se houver) + vídeo da tela (se estiver compartilhando)
+  const tracks = [];
+  if (micOutputStream) tracks.push(...micOutputStream.getAudioTracks());
+  if (sharingScreen && screenStream) tracks.push(...screenStream.getVideoTracks());
+  return new MediaStream(tracks);
+}
+
+function callPeer(peerId, name) {
+  if (calls[peerId] || peerId === peer.id) return;
+  const call = peer.call(peerId, outgoingStream(), { metadata: { name: myName, sharing: sharingScreen } });
+  calls[peerId] = call;
+  wireCall(call, name);
+}
+
+function acceptCall(call) {
+  call.answer(outgoingStream());
+  calls[call.peer] = call;
+  const theirName = (call.metadata && call.metadata.name) || remoteNames[call.peer];
+  wireCall(call, theirName);
+}
+
+function wireCall(call, name) {
+  call.on('stream', (remoteStream) => {
+    const video = addRemoteTile(call.peer, name || remoteNames[call.peer]);
+    video.srcObject = remoteStream;
+    const hasVideo = remoteStream.getVideoTracks().length > 0;
+    video.classList.toggle('has-video', hasVideo);
+    const tile = document.getElementById('tile-' + call.peer);
+    if (tile) tile.querySelector('.screen-badge')?.remove();
+    if (hasVideo && tile) {
+      const badge = document.createElement('div');
+      badge.className = 'screen-badge';
+      badge.textContent = '🖥️ compartilhando tela';
+      badge.style.display = 'block';
+      tile.appendChild(badge);
+    }
+    if (tile) addFullscreenBtn(tile, video).classList.toggle('show', hasVideo);
+    attachVolumeMeter(remoteStream, 'tile-' + call.peer);
+  });
+  call.on('close', () => { removeRemoteTile(call.peer); delete calls[call.peer]; });
+}
+
+function rebuildAllCalls() {
+  const ids = Object.keys(calls);
+  ids.forEach(id => { calls[id].close(); delete calls[id]; });
+  ids.forEach(id => callPeer(id, remoteNames[id]));
+}
+
+// ---- Controles ----
+let micOn = true, sharingScreen = false;
+
+$('micBtn').onclick = () => {
+  if (!hasMic) { enableMic(); return; }
+  micOn = !micOn;
+  if (micGainNode) micGainNode.gain.value = micOn ? micVolumePercent / 100 : 0;
+  $('micBtn').classList.toggle('active', micOn);
+  $('micBtn').classList.toggle('off', !micOn);
+  $('micBtn').textContent = micOn ? '🎤' : '🔇';
+};
+
+$('screenBtn').onclick = async () => {
+  if (!sharingScreen) {
+    try {
+      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    } catch (e) { return; }
+    sharingScreen = true;
+    const localTile = $('tile-local');
+    const localVideo = document.querySelector('#tile-local video');
+    localVideo.srcObject = screenStream;
+    localVideo.classList.add('has-video');
+    addFullscreenBtn(localTile, localVideo).classList.add('show');
+    $('screenBtn').classList.add('active');
+    rebuildAllCalls();
+    toast("Compartilhando sua tela");
+    screenStream.getVideoTracks()[0].onended = stopScreenShare;
+  } else {
+    stopScreenShare();
+  }
+};
+
+function stopScreenShare() {
+  if (screenStream) screenStream.getTracks().forEach(t => t.stop());
+  sharingScreen = false;
+  const localVideo = document.querySelector('#tile-local video');
+  localVideo.srcObject = null;
+  localVideo.classList.remove('has-video');
+  const localTile = $('tile-local');
+  localTile?.querySelector('.fs-btn')?.classList.remove('show');
+  $('screenBtn').classList.remove('active');
+  rebuildAllCalls();
+  toast("Parou de compartilhar a tela");
+}
+
+$('leaveBtn').onclick = () => {
+  if (confirm("Sair da chamada?")) location.reload();
+};
+
+// Atalho de teclado: M para mutar/desmutar (funciona enquanto a aba estiver em foco)
+document.addEventListener('keydown', (e) => {
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea') return;
+  if (e.target.isContentEditable) return;
+  const inCall = $('callScreen').offsetParent !== null; // true se estiver visível na tela
+  if (!inCall) return;
+  if (e.key === 'm' || e.key === 'M' || e.code === 'KeyM') {
+    e.preventDefault();
+    $('micBtn').click();
+  }
+});
+
+window.onbeforeunload = () => { if (peer) peer.destroy(); };
+</script>
+</body>
+</html>

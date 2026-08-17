@@ -164,27 +164,6 @@
     font-size: 11px;
     display: none;
   }
-  .tile .fs-btn {
-    position: absolute;
-    right: 8px;
-    bottom: 12px;
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
-    background: rgba(0,0,0,.6);
-    color: #eaeaea;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    font-size: 16px;
-    padding: 0;
-    border: none;
-    cursor: pointer;
-    z-index: 3;
-  }
-  .tile .fs-btn.show { display: flex; }
-  .tile .fs-btn:hover { background: rgba(0,0,0,.8); opacity: 1; }
-  .tile:fullscreen, video:fullscreen { object-fit: contain; background: #000; }
   .tile .volbar {
     position: absolute;
     left: 0; right: 0; bottom: 0;
@@ -265,7 +244,6 @@
   <div id="controls">
     <button id="micBtn" class="ctrl-btn active" title="Mutar/desmutar (tecla M)">🎤</button>
     <button id="screenBtn" class="ctrl-btn" title="Compartilhar tela">🖥️</button>
-    <button id="noiseBtn" class="ctrl-btn active" title="Filtro de ruído (reduz ruído de fundo do seu microfone)">🔉</button>
     <button id="leaveBtn" class="ctrl-btn leave" title="Sair">📵</button>
   </div>
   <div style="text-align:center;font-size:11px;color:#6b7280;padding-bottom:10px;background:#14161c;">Atalho: tecla <b>M</b> muta/desmuta</div>
@@ -283,13 +261,6 @@ let localStream = null;   // stream de ÁUDIO bruto do mic
 let micOutputStream = null; // stream já processado (com ganho aplicado) que vai pra chamada
 let micGainNode = null;
 let micVolumePercent = 100; // 0-200%
-let noiseFilterOn = true; // filtro de ruído ligado por padrão
-let noiseHighpass = null;
-let noiseCompressor = null;
-
-function micConstraints() {
-  return { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
-}
 let screenStream = null;  // stream de vídeo (tela), só quando compartilhando
 let hasMic = false;
 const calls = {};       // peerId -> MediaConnection
@@ -323,7 +294,7 @@ async function joinCall() {
 
   $('status').textContent = "Pedindo acesso ao microfone...";
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     hasMic = true;
     setupMicGainChain(localStream);
   } catch (e) {
@@ -386,7 +357,7 @@ async function enableMic() {
   const btn = document.getElementById('enableMediaBtn');
   if (btn) { btn.textContent = "Pedindo acesso..."; btn.disabled = true; }
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     hasMic = true; micOn = true;
     setupMicGainChain(localStream);
     $('micBtn').textContent = '🎤';
@@ -417,32 +388,6 @@ $('copyLinkBtn').onclick = () => {
 
 function initials(name) {
   return (name || "?").trim().slice(0, 2).toUpperCase();
-}
-
-// ---- Tela cheia ----
-function addFullscreenBtn(tile, video) {
-  let btn = tile.querySelector('.fs-btn');
-  if (!btn) {
-    btn = document.createElement('button');
-    btn.className = 'fs-btn';
-    btn.innerHTML = '⛶';
-    btn.title = 'Tela cheia';
-    btn.onclick = (e) => { e.stopPropagation(); toggleFullscreen(video); };
-    tile.appendChild(btn);
-  }
-  return btn;
-}
-
-function toggleFullscreen(video) {
-  const fsElement = document.fullscreenElement || document.webkitFullscreenElement;
-  if (fsElement) {
-    if (document.exitFullscreen) document.exitFullscreen();
-    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
-    return;
-  }
-  if (video.requestFullscreen) video.requestFullscreen();
-  else if (video.webkitRequestFullscreen) video.webkitRequestFullscreen();
-  else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen(); // iOS Safari
 }
 
 function addLocalTile() {
@@ -614,50 +559,13 @@ function attachVolumeMeter(stream, tileId) {
 function setupMicGainChain(rawStream) {
   const ctx = getAudioCtx();
   const source = ctx.createMediaStreamSource(rawStream);
-
-  // Filtro de ruído: corta graves (zumbido/ventilador) e comprime ruído de fundo constante
-  noiseHighpass = ctx.createBiquadFilter();
-  noiseHighpass.type = 'highpass';
-
-  noiseCompressor = ctx.createDynamicsCompressor();
-  noiseCompressor.knee.value = 30;
-  noiseCompressor.attack.value = 0.003;
-  noiseCompressor.release.value = 0.25;
-
   micGainNode = ctx.createGain();
   micGainNode.gain.value = micOn ? micVolumePercent / 100 : 0;
-
   const dest = ctx.createMediaStreamDestination();
-
-  source.connect(noiseHighpass);
-  noiseHighpass.connect(noiseCompressor);
-  noiseCompressor.connect(micGainNode);
+  source.connect(micGainNode);
   micGainNode.connect(dest);
-
   micOutputStream = dest.stream;
-  applyNoiseFilterState();
 }
-
-function applyNoiseFilterState() {
-  if (!noiseHighpass || !noiseCompressor) return;
-  if (noiseFilterOn) {
-    noiseHighpass.frequency.value = 120;   // corta ruído grave contínuo
-    noiseCompressor.threshold.value = -48; // achata ruído de fundo baixo
-    noiseCompressor.ratio.value = 14;
-  } else {
-    noiseHighpass.frequency.value = 0;     // deixa tudo passar
-    noiseCompressor.threshold.value = 0;
-    noiseCompressor.ratio.value = 1;
-  }
-}
-
-$('noiseBtn').onclick = () => {
-  noiseFilterOn = !noiseFilterOn;
-  applyNoiseFilterState();
-  $('noiseBtn').classList.toggle('active', noiseFilterOn);
-  $('noiseBtn').classList.toggle('off', !noiseFilterOn);
-  toast(noiseFilterOn ? "Filtro de ruído ativado" : "Filtro de ruído desativado");
-};
 
 function outgoingStream() {
   // Junta áudio do mic (já com ganho aplicado, se houver) + vídeo da tela (se estiver compartilhando)
@@ -696,7 +604,6 @@ function wireCall(call, name) {
       badge.style.display = 'block';
       tile.appendChild(badge);
     }
-    if (tile) addFullscreenBtn(tile, video).classList.toggle('show', hasVideo);
     attachVolumeMeter(remoteStream, 'tile-' + call.peer);
   });
   call.on('close', () => { removeRemoteTile(call.peer); delete calls[call.peer]; });
@@ -726,11 +633,9 @@ $('screenBtn').onclick = async () => {
       screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
     } catch (e) { return; }
     sharingScreen = true;
-    const localTile = $('tile-local');
     const localVideo = document.querySelector('#tile-local video');
     localVideo.srcObject = screenStream;
     localVideo.classList.add('has-video');
-    addFullscreenBtn(localTile, localVideo).classList.add('show');
     $('screenBtn').classList.add('active');
     rebuildAllCalls();
     toast("Compartilhando sua tela");
@@ -746,8 +651,6 @@ function stopScreenShare() {
   const localVideo = document.querySelector('#tile-local video');
   localVideo.srcObject = null;
   localVideo.classList.remove('has-video');
-  const localTile = $('tile-local');
-  localTile?.querySelector('.fs-btn')?.classList.remove('show');
   $('screenBtn').classList.remove('active');
   rebuildAllCalls();
   toast("Parou de compartilhar a tela");

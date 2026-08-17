@@ -213,6 +213,8 @@ let isHost = false;
 let localStream = null;
 let screenStream = null;
 let cameraTrack = null;
+let hasMedia = false;
+let pendingMediaError = null;
 const calls = {};       // peerId -> MediaConnection
 const conns = {};       // peerId -> DataConnection (for names / peer-list gossip)
 const remoteNames = {}; // peerId -> name
@@ -272,11 +274,14 @@ async function joinCall() {
   $('status').innerHTML = "Pedindo acesso à câmera/microfone...";
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    cameraTrack = localStream.getVideoTracks()[0];
+    hasMedia = true;
   } catch (e) {
-    showPermissionHelp(e);
-    return;
+    // Não trava a entrada na sala: entra sem câmera/mic e permite ativar depois, de dentro da sala.
+    localStream = new MediaStream();
+    hasMedia = false;
+    pendingMediaError = e;
   }
-  cameraTrack = localStream.getVideoTracks()[0];
 
   $('status').textContent = "Conectando na sala...";
   startPeer();
@@ -318,6 +323,57 @@ function enterCallUI() {
   $('joinScreen').style.display = 'none';
   $('callScreen').style.display = 'flex';
   $('roomLabel').textContent = roomId;
+  if (!hasMedia) showMediaBanner();
+}
+
+function showMediaBanner() {
+  if (document.getElementById('mediaBanner')) return;
+  const banner = document.createElement('div');
+  banner.id = 'mediaBanner';
+  banner.style.cssText = "background:#20161a;border-bottom:1px solid #d64545;padding:10px 20px;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;";
+  banner.innerHTML =
+    '<span>⚠️ Você entrou sem câmera/microfone. Os outros participantes conseguem te ver e ouvir normalmente assim que você ativar.</span>' +
+    '<button id="enableMediaBtn" class="btn-primary" style="padding:8px 14px;white-space:nowrap;">🎤 Ativar câmera/mic</button>';
+  $('callScreen').insertBefore(banner, $('grid'));
+  document.getElementById('enableMediaBtn').onclick = enableMedia;
+}
+
+async function enableMedia() {
+  const btn = document.getElementById('enableMediaBtn');
+  if (btn) { btn.textContent = "Pedindo acesso..."; btn.disabled = true; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    localStream = stream;
+    cameraTrack = localStream.getVideoTracks()[0];
+    hasMedia = true;
+    micOn = true; camOn = true;
+
+    const localVideo = document.querySelector('#tile-local video');
+    if (localVideo) localVideo.srcObject = localStream;
+
+    // Reconecta chamadas existentes agora com mídia de verdade
+    for (const id in calls) { calls[id].close(); delete calls[id]; }
+    Object.keys(remoteNames).forEach(pid => {
+      if (pid !== peer.id) callPeer(pid, remoteNames[pid]);
+    });
+
+    $('micBtn').textContent = '🎤';
+    $('camBtn').textContent = '📷';
+    $('micBtn').classList.add('active'); $('micBtn').classList.remove('off');
+    $('camBtn').classList.add('active'); $('camBtn').classList.remove('off');
+
+    const banner = document.getElementById('mediaBanner');
+    if (banner) banner.remove();
+    toast("Câmera e microfone ativados!");
+  } catch (e) {
+    if (btn) { btn.textContent = "🎤 Ativar câmera/mic"; btn.disabled = false; }
+    const reasons = {
+      NotAllowedError: "Permissão negada pelo navegador. Clique no cadeado 🔒 ao lado do endereço e permita câmera/microfone.",
+      NotFoundError: "Nenhuma câmera/microfone foi encontrado pelo navegador.",
+      NotReadableError: "Outro programa está usando a câmera/microfone agora."
+    };
+    toast(reasons[e.name] || "Não consegui ativar câmera/microfone.");
+  }
 }
 
 $('copyLinkBtn').onclick = () => {
@@ -468,6 +524,7 @@ function acceptCall(call) {
 let micOn = true, camOn = true, sharingScreen = false;
 
 $('micBtn').onclick = () => {
+  if (!hasMedia) { enableMedia(); return; }
   micOn = !micOn;
   localStream.getAudioTracks().forEach(t => t.enabled = micOn);
   $('micBtn').classList.toggle('active', micOn);
@@ -476,6 +533,7 @@ $('micBtn').onclick = () => {
 };
 
 $('camBtn').onclick = () => {
+  if (!hasMedia) { enableMedia(); return; }
   camOn = !camOn;
   localStream.getVideoTracks().forEach(t => t.enabled = camOn);
   $('camBtn').classList.toggle('active', camOn);
@@ -502,7 +560,7 @@ $('screenBtn').onclick = async () => {
 
 function stopScreenShare() {
   if (screenStream) screenStream.getTracks().forEach(t => t.stop());
-  replaceOutgoingVideoTrack(cameraTrack);
+  replaceOutgoingVideoTrack(cameraTrack || null);
   document.getElementById('tile-local').querySelector('video').srcObject = localStream;
   sharingScreen = false;
   $('screenBtn').classList.remove('active');

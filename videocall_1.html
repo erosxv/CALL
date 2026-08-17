@@ -137,15 +137,22 @@
     border-radius: 8px;
     font-size: 13px;
   }
-  .tile .muted-badge {
+  .tile .vol-control {
     position: absolute;
-    right: 10px;
-    top: 10px;
-    background: rgba(220,50,50,.85);
+    right: 8px;
+    top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(0,0,0,.55);
     padding: 4px 8px;
     border-radius: 8px;
-    font-size: 12px;
-    display: none;
+  }
+  .tile .vol-control span { font-size: 12px; }
+  .tile .vol-control input[type="range"] {
+    width: 60px;
+    accent-color: #5b8cff;
+    cursor: pointer;
   }
   .tile .screen-badge {
     position: absolute;
@@ -239,6 +246,7 @@
     <button id="screenBtn" class="ctrl-btn" title="Compartilhar tela">🖥️</button>
     <button id="leaveBtn" class="ctrl-btn leave" title="Sair">📵</button>
   </div>
+  <div style="text-align:center;font-size:11px;color:#6b7280;padding-bottom:10px;background:#14161c;">Atalho: tecla <b>M</b> muta/desmuta</div>
 </div>
 
 <div id="toast"></div>
@@ -249,7 +257,10 @@ let myName = "";
 let roomId = "";
 let peer = null;
 let isHost = false;
-let localStream = null;   // stream de ÁUDIO (mic)
+let localStream = null;   // stream de ÁUDIO bruto do mic
+let micOutputStream = null; // stream já processado (com ganho aplicado) que vai pra chamada
+let micGainNode = null;
+let micVolumePercent = 100; // 0-200%
 let screenStream = null;  // stream de vídeo (tela), só quando compartilhando
 let hasMic = false;
 const calls = {};       // peerId -> MediaConnection
@@ -285,6 +296,7 @@ async function joinCall() {
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     hasMic = true;
+    setupMicGainChain(localStream);
   } catch (e) {
     // Não trava a entrada: entra mudo e permite ativar depois, de dentro da sala.
     localStream = new MediaStream();
@@ -347,6 +359,7 @@ async function enableMic() {
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     hasMic = true; micOn = true;
+    setupMicGainChain(localStream);
     $('micBtn').textContent = '🎤';
     $('micBtn').classList.add('active'); $('micBtn').classList.remove('off');
     attachVolumeMeter(localStream, 'tile-local');
@@ -392,7 +405,15 @@ function addLocalTile() {
   const volbar = document.createElement('div');
   volbar.className = 'volbar';
   volbar.innerHTML = '<div class="volfill"></div>';
-  tile.appendChild(video); tile.appendChild(avatar); tile.appendChild(tag); tile.appendChild(volbar);
+  const myVolControl = document.createElement('div');
+  myVolControl.className = 'vol-control';
+  myVolControl.title = "Volume da sua própria voz enviada pra chamada";
+  myVolControl.innerHTML = '<span>🎙️</span><input type="range" id="myMicVolSlider" min="0" max="200" value="' + micVolumePercent + '">';
+  myVolControl.querySelector('input').oninput = (e) => {
+    micVolumePercent = Number(e.target.value);
+    if (micGainNode && micOn) micGainNode.gain.value = micVolumePercent / 100;
+  };
+  tile.appendChild(video); tile.appendChild(avatar); tile.appendChild(tag); tile.appendChild(volbar); tile.appendChild(myVolControl);
   $('grid').appendChild(tile);
   updateCount();
   if (hasMic) attachVolumeMeter(localStream, 'tile-local');
@@ -417,7 +438,13 @@ function addRemoteTile(peerId, name) {
   const volbar = document.createElement('div');
   volbar.className = 'volbar';
   volbar.innerHTML = '<div class="volfill"></div>';
-  tile.appendChild(video); tile.appendChild(avatar); tile.appendChild(tag); tile.appendChild(volbar);
+  const volControl = document.createElement('div');
+  volControl.className = 'vol-control';
+  volControl.innerHTML = '<span>🔊</span><input type="range" min="0" max="100" value="100">';
+  volControl.querySelector('input').oninput = (e) => {
+    video.volume = e.target.value / 100;
+  };
+  tile.appendChild(video); tile.appendChild(avatar); tile.appendChild(tag); tile.appendChild(volbar); tile.appendChild(volControl);
   $('grid').appendChild(tile);
   updateCount();
   return video;
@@ -529,10 +556,21 @@ function attachVolumeMeter(stream, tileId) {
   loop();
 }
 
+function setupMicGainChain(rawStream) {
+  const ctx = getAudioCtx();
+  const source = ctx.createMediaStreamSource(rawStream);
+  micGainNode = ctx.createGain();
+  micGainNode.gain.value = micOn ? micVolumePercent / 100 : 0;
+  const dest = ctx.createMediaStreamDestination();
+  source.connect(micGainNode);
+  micGainNode.connect(dest);
+  micOutputStream = dest.stream;
+}
+
 function outgoingStream() {
-  // Junta áudio do mic (se houver) + vídeo da tela (se estiver compartilhando)
+  // Junta áudio do mic (já com ganho aplicado, se houver) + vídeo da tela (se estiver compartilhando)
   const tracks = [];
-  if (localStream) tracks.push(...localStream.getAudioTracks());
+  if (micOutputStream) tracks.push(...micOutputStream.getAudioTracks());
   if (sharingScreen && screenStream) tracks.push(...screenStream.getVideoTracks());
   return new MediaStream(tracks);
 }
@@ -583,7 +621,7 @@ let micOn = true, sharingScreen = false;
 $('micBtn').onclick = () => {
   if (!hasMic) { enableMic(); return; }
   micOn = !micOn;
-  localStream.getAudioTracks().forEach(t => t.enabled = micOn);
+  if (micGainNode) micGainNode.gain.value = micOn ? micVolumePercent / 100 : 0;
   $('micBtn').classList.toggle('active', micOn);
   $('micBtn').classList.toggle('off', !micOn);
   $('micBtn').textContent = micOn ? '🎤' : '🔇';
@@ -626,8 +664,10 @@ $('leaveBtn').onclick = () => {
 document.addEventListener('keydown', (e) => {
   const tag = (e.target.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'textarea') return;
-  if ($('callScreen').style.display !== 'flex') return;
-  if (e.key === 'm' || e.key === 'M') {
+  if (e.target.isContentEditable) return;
+  const inCall = $('callScreen').offsetParent !== null; // true se estiver visível na tela
+  if (!inCall) return;
+  if (e.key === 'm' || e.key === 'M' || e.code === 'KeyM') {
     e.preventDefault();
     $('micBtn').click();
   }

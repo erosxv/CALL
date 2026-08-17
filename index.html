@@ -645,16 +645,35 @@ function setupMicGainChain(rawStream) {
   const source = ctx.createMediaStreamSource(rawStream);
 
   // 1) Corta zumbido/ronco grave contínuo (ventilador, fiação, batida no fio)
+  //    Só entra em ação quando o filtro está ligado (ver toggle do noiseBtn).
   noiseHighpass = ctx.createBiquadFilter();
   noiseHighpass.type = 'highpass';
-  noiseHighpass.frequency.value = 120;
+  noiseHighpass.frequency.value = noiseFilterOn ? 120 : 0;
 
-  // 2) Gate de ruído: silencia o mic quando você não está falando (é onde
-  //    ruído de fundo constante mais incomoda) e libera quando detecta voz
-  noiseGateNode = ctx.createScriptProcessor(1024, 1, 1);
+  // 2) Redutor de ruído (estilo "noise gate" do Discord/TeamSpeak): em vez de
+  //    cortar seco pra silêncio total quando você para de falar, ele reduz o
+  //    volume de fundo suavemente até um "chão" baixo (não mudo), segura a
+  //    porta aberta por um tempinho depois da fala (hold) pra não cortar o
+  //    final das palavras, e abre rápido de novo assim que detecta sua voz.
+  const sampleRate = ctx.sampleRate;
+  const HOLD_MS = 260;          // mantém aberto por um tempo após a fala cair
+  const holdSamplesMax = Math.round((HOLD_MS / 1000) * sampleRate);
+  const FLOOR_GAIN = 0.12;      // "chão" de ruído (não silencia 100%, evita efeito robótico)
+
+  // Coeficientes calculados como constantes de tempo reais (em ms), não "por amostra
+  // solta" — isso evita que o envelope/ganho oscile na mesma frequência da própria
+  // onda sonora, que é o que causava o chiado/crepitação durante a fala.
+  const timeConstCoef = (ms) => 1 - Math.exp(-1 / ((ms / 1000) * sampleRate));
+  const attackCoef = timeConstCoef(5);     // envelope reage à voz em ~5ms
+  const releaseCoef = timeConstCoef(120);  // envelope relaxa em ~120ms (sem tremular)
+  const gainUpCoef = timeConstCoef(8);     // porta abre suave em ~8ms
+  const gainDownCoef = timeConstCoef(180); // porta fecha suave em ~180ms
+
   let envelope = 0;
-  const attackCoef = 0.6;   // reage rápido quando o volume sobe (fala)
-  const releaseCoef = 0.05; // fecha aos poucos quando o volume cai (evita corte seco)
+  let currentGain = 1;
+  let holdCounter = 0;
+
+  noiseGateNode = ctx.createScriptProcessor(1024, 1, 1);
   noiseGateNode.onaudioprocess = (e) => {
     const input = e.inputBuffer.getChannelData(0);
     const output = e.outputBuffer.getChannelData(0);
@@ -664,11 +683,15 @@ function setupMicGainChain(rawStream) {
       envelope = level > envelope
         ? envelope + (level - envelope) * attackCoef
         : envelope + (level - envelope) * releaseCoef;
-      // abaixo do limiar: silencia; perto do limiar: transição suave (sem clique)
-      const gain = envelope >= noiseGateThreshold
-        ? 1
-        : Math.pow(Math.max(envelope / noiseGateThreshold, 0), 3);
-      output[i] = input[i] * gain;
+
+      const speaking = envelope >= noiseGateThreshold;
+      if (speaking) holdCounter = holdSamplesMax;
+      else if (holdCounter > 0) holdCounter--;
+
+      const targetGain = (speaking || holdCounter > 0) ? 1 : FLOOR_GAIN;
+      currentGain += (targetGain - currentGain) * (targetGain > currentGain ? gainUpCoef : gainDownCoef);
+
+      output[i] = input[i] * currentGain;
     }
   };
 
@@ -707,12 +730,14 @@ function detachScreenAudio() {
 }
 
 function applyNoiseFilterState() {
-  // O próprio onaudioprocess já lê noiseFilterOn a cada bloco de áudio,
-  // então só precisamos atualizar a variável — nada mais a fazer aqui.
+  // O highpass é ligado/desligado de verdade (bypass completo quando off),
+  // e o gate lê noiseFilterOn a cada bloco de áudio — nada mais a fazer aqui.
+  if (noiseHighpass) noiseHighpass.frequency.value = noiseFilterOn ? 120 : 0;
 }
 
 $('noiseBtn').onclick = () => {
   noiseFilterOn = !noiseFilterOn;
+  applyNoiseFilterState();
   $('noiseBtn').classList.toggle('noise-on', noiseFilterOn);
   $('noiseBtn').textContent = noiseFilterOn ? '🔉' : '🔈';
   toast(noiseFilterOn ? "Filtro de ruído ativado" : "Filtro de ruído desativado (clique 2x pra ajustar sensibilidade)");

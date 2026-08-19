@@ -185,6 +185,27 @@
   .tile .fs-btn.show { display: flex; }
   .tile .fs-btn:hover { background: rgba(0,0,0,.8); opacity: 1; }
   .tile:fullscreen, video:fullscreen { object-fit: contain; background: #000; }
+  .tile .pip-btn {
+    position: absolute;
+    right: 46px;
+    bottom: 12px;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: rgba(0,0,0,.6);
+    color: #eaeaea;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    padding: 0;
+    border: none;
+    cursor: pointer;
+    z-index: 3;
+  }
+  .tile .pip-btn.show { display: flex; }
+  .tile .pip-btn.active { background: rgba(91,140,255,.9); }
+  .tile .pip-btn:hover { background: rgba(0,0,0,.8); opacity: 1; }
   .tile .volbar {
     position: absolute;
     left: 0; right: 0; bottom: 0;
@@ -244,18 +265,45 @@
     transform: translateX(-50%);
     background: #1a1d24;
     border: 1px solid #2a2e37;
-    padding: 14px 18px;
+    padding: 16px 18px;
     border-radius: 12px;
     font-size: 13px;
     display: none;
     z-index: 10;
-    width: 260px;
-    text-align: center;
+    width: 300px;
+    max-width: 90vw;
+    text-align: left;
   }
   #noisePanel.show { display: block; }
+  #noisePanel .np-section { margin-bottom: 16px; }
+  #noisePanel .np-section:last-child { margin-bottom: 0; }
   #noisePanel label { display: block; color: #9aa0a6; margin-bottom: 8px; }
-  #noisePanel input[type="range"] { width: 100%; accent-color: #22b07d; }
-  #noisePanel .hint { display: flex; justify-content: space-between; font-size: 11px; color: #6b7280; margin-top: 4px; }
+  #noisePanel select {
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid #2a2e37;
+    background: #0f1115;
+    color: #eaeaea;
+    font-size: 13px;
+  }
+  .mode-row { display: flex; gap: 6px; }
+  .mode-row button {
+    flex: 1;
+    padding: 8px 4px;
+    font-size: 11px;
+    background: #2a2e37;
+    color: #9aa0a6;
+    border-radius: 8px;
+  }
+  .mode-row button.active { background: #22b07d; color: #fff; }
+  .meter-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .meter-row span { width: 42px; font-size: 11px; color: #9aa0a6; }
+  .meter-bar { flex: 1; height: 8px; border-radius: 4px; background: #0f1115; overflow: hidden; }
+  .meter-fill { height: 100%; width: 0%; transition: width .08s linear; }
+  .meter-fill.mic { background: #5b8cff; }
+  .meter-fill.noise { background: #d68a45; }
+  .meter-fill.voice { background: #22b07d; }
 </style>
 </head>
 <body>
@@ -285,7 +333,7 @@
   <div id="controls">
     <button id="micBtn" class="ctrl-btn active" title="Mutar/desmutar (tecla M)">🎤</button>
     <button id="screenBtn" class="ctrl-btn" title="Compartilhar tela">🖥️</button>
-    <button id="noiseBtn" class="ctrl-btn noise-on" title="Filtro de ruído (clique: liga/desliga · duplo clique: ajustar sensibilidade)">🔉</button>
+    <button id="noiseBtn" class="ctrl-btn noise-on" title="Filtro de ruído (clique: liga/desliga · duplo clique: abrir configurações)">🔉</button>
     <button id="leaveBtn" class="ctrl-btn leave" title="Sair">📵</button>
   </div>
   <div style="text-align:center;font-size:11px;color:#6b7280;padding-bottom:10px;background:#14161c;">Atalho: tecla <b>M</b> muta/desmuta</div>
@@ -293,9 +341,34 @@
 
 <div id="toast"></div>
 <div id="noisePanel">
-  <label for="noiseSensitivity">Sensibilidade do filtro de ruído</label>
-  <input type="range" id="noiseSensitivity" min="1" max="100" value="30">
-  <div class="hint"><span>Capta mais (fraco)</span><span>Corta mais (forte)</span></div>
+  <div class="np-section">
+    <label>Modo de supressão de ruído</label>
+    <div id="noiseModes" class="mode-row">
+      <button data-mode="off">OFF</button>
+      <button data-mode="low">LOW</button>
+      <button data-mode="medium" class="active">MED</button>
+      <button data-mode="high">HIGH</button>
+      <button data-mode="auto">AUTO</button>
+    </div>
+  </div>
+  <div class="np-section">
+    <label for="micDeviceSelect">Microfone</label>
+    <select id="micDeviceSelect"><option value="">Padrão do sistema</option></select>
+  </div>
+  <div class="np-section">
+    <div class="meter-row"><span>MIC</span><div class="meter-bar"><div id="meterMic" class="meter-fill mic"></div></div></div>
+    <div class="meter-row"><span>RUÍDO</span><div class="meter-bar"><div id="meterNoise" class="meter-fill noise"></div></div></div>
+    <div class="meter-row"><span>VOZ</span><div class="meter-bar"><div id="meterVoice" class="meter-fill voice"></div></div></div>
+  </div>
+  <div class="np-section">
+    <button id="micTestBtn" class="btn-ghost" style="width:100%;">🎙️ Testar: original x processado</button>
+    <div id="micTestResult" style="display:none;margin-top:8px;">
+      <div style="display:flex;gap:8px;">
+        <button id="playOriginalBtn" class="btn-ghost" style="flex:1;font-size:12px;padding:8px;">▶ Original</button>
+        <button id="playProcessedBtn" class="btn-ghost" style="flex:1;font-size:12px;padding:8px;">▶ Processado</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -308,13 +381,171 @@ let localStream = null;   // stream de ÁUDIO bruto do mic
 let micOutputStream = null; // stream já processado (com ganho aplicado) que vai pra chamada
 let micGainNode = null;
 let micVolumePercent = 100; // 0-200%
-let noiseFilterOn = true; // filtro de ruído ligado por padrão
+let noiseMode = 'medium';   // off | low | medium | high | auto
+let lastActiveNoiseMode = 'medium';
 let noiseHighpass = null;
-let noiseGateNode = null;
-let noiseGateThreshold = 0.018; // sensibilidade do gate (0 a ~0.1)
+let micRawSourceNode = null;
+let voiceGateNode = null;    // AudioWorkletNode (quando o navegador suporta)
+let fallbackGateNode = null; // ScriptProcessorNode (fallback quando não suporta AudioWorklet)
+let compressorNode = null;
+let limiterNode = null;
+let meterState = { floor: 0.001, speaking: false }; // alimentado pelo worklet/fallback
+const latestLevels = {}; // tileId -> nível de volume 0-1 (preenchido pelo attachVolumeMeter)
+let selectedMicDeviceId = null;
+let micTestRawSource = null;
+let micTestOriginalUrl = null;
+let micTestProcessedUrl = null;
 let mixDestination = null;   // destino único onde mic + áudio da tela são misturados
 let screenAudioSource = null;
 let screenAudioGain = null;
+
+// ---- Worklet de supressão de ruído (roda fora da thread principal) ----
+// Faz: envelope de voz (attack/release), estimativa adaptativa do "chão" de ruído
+// (sobe devagar com ruído contínuo tipo ventilador/ar-condicionado, desce rápido
+// quando fica quieto), e um "tempo de confirmação" antes de abrir o gate de vez —
+// isso é o que evita abrir a porta pra um clique de teclado/mouse (que passa rápido
+// demais pra confirmar) mas abre pra voz (que sustenta o sinal).
+const NOISE_WORKLET_CODE = `
+class VoiceGateProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    const sr = sampleRate;
+    this.sr = sr;
+    this.attackCoef = 1 - Math.exp(-1 / (0.005 * sr));
+    this.releaseCoef = 1 - Math.exp(-1 / (0.120 * sr));
+    this.floorAttackCoef = 1 - Math.exp(-1 / (2.0 * sr));
+    this.floorReleaseCoef = 1 - Math.exp(-1 / (0.4 * sr));
+    this.gainUpCoef = 1 - Math.exp(-1 / (0.008 * sr));
+    this.gainDownCoef = 1 - Math.exp(-1 / (0.180 * sr));
+    this.envelope = 0; this.floor = 0.003; this.currentGain = 1;
+    this.holdCounter = 0; this.confirmCounter = 0; this.frameCount = 0;
+    this.mode = 'medium';
+    this.port.onmessage = (e) => {
+      if (e.data && e.data.type === 'config') this.mode = e.data.mode;
+    };
+  }
+  paramsForMode() {
+    switch (this.mode) {
+      case 'low':  return { ratio: 1.6, floorGain: 0.35, holdMs: 300, confirmMs: 8 };
+      case 'high': return { ratio: 3.2, floorGain: 0.05, holdMs: 200, confirmMs: 20 };
+      case 'auto': return this._autoParams || { ratio: 2.2, floorGain: 0.15, holdMs: 260, confirmMs: 14 };
+      default:     return { ratio: 2.2, floorGain: 0.15, holdMs: 260, confirmMs: 14 };
+    }
+  }
+  process(inputs, outputs) {
+    const input = inputs[0][0];
+    const output = outputs[0][0];
+    if (!input || !output) return true;
+    if (this.mode === 'off') {
+      output.set(input);
+      this.frameCount++;
+      if (this.frameCount % 4 === 0) this.port.postMessage({ floor: this.floor, speaking: false });
+      return true;
+    }
+    if (this.mode === 'auto') {
+      const noisy = this.floor > 0.012, veryNoisy = this.floor > 0.03;
+      this._autoParams = veryNoisy ? { ratio: 3.0, floorGain: 0.08, holdMs: 220, confirmMs: 18 }
+        : noisy ? { ratio: 2.4, floorGain: 0.15, holdMs: 250, confirmMs: 14 }
+        : { ratio: 1.8, floorGain: 0.30, holdMs: 300, confirmMs: 8 };
+    }
+    const p = this.paramsForMode();
+    const holdMax = Math.round((p.holdMs / 1000) * this.sr);
+    const confirmMax = Math.max(1, Math.round((p.confirmMs / 1000) * this.sr));
+    let speaking = false;
+    for (let i = 0; i < input.length; i++) {
+      const level = Math.abs(input[i]);
+      this.envelope = level > this.envelope
+        ? this.envelope + (level - this.envelope) * this.attackCoef
+        : this.envelope + (level - this.envelope) * this.releaseCoef;
+      const aboveFloorNow = this.envelope > this.floor * p.ratio;
+      if (!aboveFloorNow) this.floor += (this.envelope - this.floor) * this.floorAttackCoef;
+      else this.floor += (Math.min(this.envelope, this.floor) - this.floor) * this.floorReleaseCoef;
+      if (this.floor < 0.0008) this.floor = 0.0008;
+      const overThreshold = this.envelope >= this.floor * p.ratio;
+      this.confirmCounter = overThreshold ? Math.min(this.confirmCounter + 1, confirmMax) : 0;
+      const confirmed = this.confirmCounter >= confirmMax;
+      if (confirmed) { this.holdCounter = holdMax; speaking = true; }
+      else if (this.holdCounter > 0) this.holdCounter--;
+      const targetGain = (confirmed || this.holdCounter > 0) ? 1 : p.floorGain;
+      this.currentGain += (targetGain - this.currentGain) * (targetGain > this.currentGain ? this.gainUpCoef : this.gainDownCoef);
+      output[i] = input[i] * this.currentGain;
+    }
+    this.frameCount++;
+    if (this.frameCount % 4 === 0) this.port.postMessage({ floor: this.floor, speaking: speaking || this.holdCounter > 0 });
+    return true;
+  }
+}
+registerProcessor('voice-gate-processor', VoiceGateProcessor);
+`;
+let workletModuleReady = false;
+async function ensureWorkletModule(ctx) {
+  if (workletModuleReady) return true;
+  if (!ctx.audioWorklet) return false;
+  try {
+    const url = URL.createObjectURL(new Blob([NOISE_WORKLET_CODE], { type: 'application/javascript' }));
+    await ctx.audioWorklet.addModule(url);
+    workletModuleReady = true;
+    return true;
+  } catch (e) {
+    console.warn('AudioWorklet indisponível, usando fallback de ScriptProcessor', e);
+    return false;
+  }
+}
+
+// Mesma lógica do worklet acima, só que rodando na thread principal via
+// ScriptProcessorNode — fallback automático pra navegadores sem suporte a AudioWorklet.
+function fallbackParamsForMode(mode, floor) {
+  switch (mode) {
+    case 'low':  return { ratio: 1.6, floorGain: 0.35, holdMs: 300, confirmMs: 8 };
+    case 'high': return { ratio: 3.2, floorGain: 0.05, holdMs: 200, confirmMs: 20 };
+    case 'auto': {
+      const noisy = floor > 0.012, veryNoisy = floor > 0.03;
+      return veryNoisy ? { ratio: 3.0, floorGain: 0.08, holdMs: 220, confirmMs: 18 }
+        : noisy ? { ratio: 2.4, floorGain: 0.15, holdMs: 250, confirmMs: 14 }
+        : { ratio: 1.8, floorGain: 0.30, holdMs: 300, confirmMs: 8 };
+    }
+    default: return { ratio: 2.2, floorGain: 0.15, holdMs: 260, confirmMs: 14 };
+  }
+}
+function createFallbackGateNode(ctx) {
+  const sr = ctx.sampleRate;
+  const attackCoef = 1 - Math.exp(-1 / (0.005 * sr));
+  const releaseCoef = 1 - Math.exp(-1 / (0.120 * sr));
+  const floorAttackCoef = 1 - Math.exp(-1 / (2.0 * sr));
+  const floorReleaseCoef = 1 - Math.exp(-1 / (0.4 * sr));
+  const gainUpCoef = 1 - Math.exp(-1 / (0.008 * sr));
+  const gainDownCoef = 1 - Math.exp(-1 / (0.180 * sr));
+  let envelope = 0, floor = 0.003, currentGain = 1, holdCounter = 0, confirmCounter = 0, frame = 0;
+  const node = ctx.createScriptProcessor(1024, 1, 1);
+  node.onaudioprocess = (e) => {
+    const input = e.inputBuffer.getChannelData(0);
+    const output = e.outputBuffer.getChannelData(0);
+    if (noiseMode === 'off') { output.set(input); return; }
+    const p = fallbackParamsForMode(noiseMode, floor);
+    const holdMax = Math.round((p.holdMs / 1000) * sr);
+    const confirmMax = Math.max(1, Math.round((p.confirmMs / 1000) * sr));
+    let speaking = false;
+    for (let i = 0; i < input.length; i++) {
+      const level = Math.abs(input[i]);
+      envelope = level > envelope ? envelope + (level - envelope) * attackCoef : envelope + (level - envelope) * releaseCoef;
+      const aboveFloorNow = envelope > floor * p.ratio;
+      if (!aboveFloorNow) floor += (envelope - floor) * floorAttackCoef;
+      else floor += (Math.min(envelope, floor) - floor) * floorReleaseCoef;
+      if (floor < 0.0008) floor = 0.0008;
+      const overThreshold = envelope >= floor * p.ratio;
+      confirmCounter = overThreshold ? Math.min(confirmCounter + 1, confirmMax) : 0;
+      const confirmed = confirmCounter >= confirmMax;
+      if (confirmed) { holdCounter = holdMax; speaking = true; }
+      else if (holdCounter > 0) holdCounter--;
+      const targetGain = (confirmed || holdCounter > 0) ? 1 : p.floorGain;
+      currentGain += (targetGain - currentGain) * (targetGain > currentGain ? gainUpCoef : gainDownCoef);
+      output[i] = input[i] * currentGain;
+    }
+    frame++;
+    if (frame % 4 === 0) { meterState.floor = floor; meterState.speaking = speaking || holdCounter > 0; }
+  };
+  return node;
+}
 
 function micConstraints() {
   return { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
@@ -325,44 +556,6 @@ const calls = {};       // peerId -> MediaConnection
 const conns = {};       // peerId -> DataConnection (nomes / lista de peers)
 const remoteNames = {}; // peerId -> name
 const hostConns = {};   // apenas o host usa: peerId -> DataConnection
-
-// ---- Áudio de alta qualidade ----
-// Por padrão, o navegador negocia o codec Opus com bitrate baixo (perfil de
-// voz, ~32kbps), pensado pra chamada de voz simples. Isso deixa o áudio da
-// tela compartilhada (música, vídeo, jogo etc.) com qualidade ruim. Aqui a
-// gente intercepta o SDP (a "receita" da conexão) antes dele ser aplicado e
-// força um bitrate bem mais alto, com estéreo e correção de erro (FEC), que
-// ajuda a não cortar o áudio quando a internet engasga.
-(function patchOpusBitrate() {
-  const origSetLocalDescription = RTCPeerConnection.prototype.setLocalDescription;
-  RTCPeerConnection.prototype.setLocalDescription = function (description) {
-    if (description && description.sdp) {
-      description = new RTCSessionDescription({
-        type: description.type,
-        sdp: boostOpusBitrate(description.sdp)
-      });
-    }
-    return origSetLocalDescription.call(this, description);
-  };
-})();
-
-function boostOpusBitrate(sdp) {
-  const opusMatch = sdp.match(/a=rtpmap:(\d+) opus\/48000/i);
-  if (!opusMatch) return sdp;
-  const payload = opusMatch[1];
-  // 128kbps é bem acima do padrão e dá pra música/tela com folga; estéreo
-  // ligado; useinbandfec ajuda a recuperar pacotes perdidos sem cortar o som.
-  const newFmtpLine = 'a=fmtp:' + payload +
-    ' minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;maxaveragebitrate=128000;maxplaybackrate=48000\r\n';
-  const fmtpRegex = new RegExp('a=fmtp:' + payload + '[^\\r\\n]*\\r\\n');
-  if (fmtpRegex.test(sdp)) {
-    sdp = sdp.replace(fmtpRegex, newFmtpLine);
-  } else {
-    const rtpmapRegex = new RegExp('(a=rtpmap:' + payload + ' opus\\/48000\\/2\\r\\n)');
-    sdp = sdp.replace(rtpmapRegex, '$1' + newFmtpLine);
-  }
-  return sdp;
-}
 
 function toast(msg) {
   const t = $('toast');
@@ -392,7 +585,8 @@ async function joinCall() {
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
     hasMic = true;
-    setupMicGainChain(localStream);
+    await setupMicGainChain(localStream);
+    refreshMicDeviceList();
   } catch (e) {
     // Não trava a entrada: entra mudo e permite ativar depois, de dentro da sala.
     localStream = new MediaStream();
@@ -455,7 +649,8 @@ async function enableMic() {
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
     hasMic = true; micOn = true;
-    setupMicGainChain(localStream);
+    await setupMicGainChain(localStream);
+    refreshMicDeviceList();
     $('micBtn').textContent = '🎤';
     $('micBtn').classList.add('active'); $('micBtn').classList.remove('off');
     attachVolumeMeter(localStream, 'tile-local');
@@ -510,6 +705,37 @@ function toggleFullscreen(video) {
   if (video.requestFullscreen) video.requestFullscreen();
   else if (video.webkitRequestFullscreen) video.webkitRequestFullscreen();
   else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen(); // iOS Safari
+}
+
+// ---- Picture-in-Picture ----
+// Deixa a janela do vídeo (tela compartilhada) flutuando por cima de tudo,
+// inclusive fora do navegador (ex: com outro programa em foco).
+const pipSupported = 'pictureInPictureEnabled' in document && document.pictureInPictureEnabled;
+
+function addPipBtn(tile, video) {
+  let btn = tile.querySelector('.pip-btn');
+  if (btn) return btn;
+  btn = document.createElement('button');
+  btn.className = 'pip-btn';
+  if (!pipSupported) return btn; // botão órfão (nunca aparece) se o navegador não suportar
+  btn.innerHTML = '🗗';
+  btn.title = 'Picture-in-Picture (flutua por cima de outras janelas)';
+  btn.onclick = async (e) => {
+    e.stopPropagation();
+    try {
+      if (document.pictureInPictureElement === video) {
+        await document.exitPictureInPicture();
+      } else {
+        await video.requestPictureInPicture();
+      }
+    } catch (err) {
+      toast("Não consegui abrir o Picture-in-Picture aqui.");
+    }
+  };
+  video.addEventListener('enterpictureinpicture', () => btn.classList.add('active'));
+  video.addEventListener('leavepictureinpicture', () => btn.classList.remove('active'));
+  tile.appendChild(btn);
+  return btn;
 }
 
 function addLocalTile() {
@@ -574,7 +800,13 @@ function addRemoteTile(peerId, name) {
 
 function removeRemoteTile(peerId) {
   const tile = document.getElementById('tile-' + peerId);
-  if (tile) tile.remove();
+  if (tile) {
+    const video = tile.querySelector('video');
+    if (video && document.pictureInPictureElement === video) {
+      document.exitPictureInPicture().catch(() => {});
+    }
+    tile.remove();
+  }
   updateCount();
 }
 
@@ -670,68 +902,71 @@ function attachVolumeMeter(stream, tileId) {
     let sum = 0;
     for (let i = 0; i < data.length; i++) sum += data[i];
     const level = Math.min(1, (sum / data.length) / 55);
+    latestLevels[tileId] = level;
+    // O medidor lê o mic bruto (antes do mute), então sem isso o indicador de
+    // "falando" continuava acendendo mesmo com o mic mutado.
+    const displayLevel = (tileId === 'tile-local' && !micOn) ? 0 : level;
     const fill = tile.querySelector('.volfill');
-    if (fill) fill.style.width = (level * 100) + '%';
-    tile.classList.toggle('speaking', level > 0.12);
+    if (fill) fill.style.width = (displayLevel * 100) + '%';
+    tile.classList.toggle('speaking', displayLevel > 0.12);
     volumeLoops[tileId] = requestAnimationFrame(loop);
   }
   loop();
 }
 
-function setupMicGainChain(rawStream) {
+function teardownMicChain() {
+  [micRawSourceNode, noiseHighpass, voiceGateNode, fallbackGateNode, compressorNode, limiterNode, micGainNode].forEach(n => {
+    if (n) { try { n.disconnect(); } catch (e) {} }
+  });
+  voiceGateNode = null;
+  fallbackGateNode = null;
+}
+
+async function setupMicGainChain(rawStream) {
   const ctx = getAudioCtx();
+  teardownMicChain(); // solta a cadeia anterior (importante ao trocar de microfone)
+
   const source = ctx.createMediaStreamSource(rawStream);
+  micRawSourceNode = source;
 
   // 1) Corta zumbido/ronco grave contínuo (ventilador, fiação, batida no fio)
-  //    Só entra em ação quando o filtro está ligado (ver toggle do noiseBtn).
   noiseHighpass = ctx.createBiquadFilter();
   noiseHighpass.type = 'highpass';
-  noiseHighpass.frequency.value = noiseFilterOn ? 120 : 0;
+  noiseHighpass.frequency.value = noiseMode !== 'off' ? 120 : 0;
 
-  // 2) Redutor de ruído (estilo "noise gate" do Discord/TeamSpeak): em vez de
-  //    cortar seco pra silêncio total quando você para de falar, ele reduz o
-  //    volume de fundo suavemente até um "chão" baixo (não mudo), segura a
-  //    porta aberta por um tempinho depois da fala (hold) pra não cortar o
-  //    final das palavras, e abre rápido de novo assim que detecta sua voz.
-  const sampleRate = ctx.sampleRate;
-  const HOLD_MS = 260;          // mantém aberto por um tempo após a fala cair
-  const holdSamplesMax = Math.round((HOLD_MS / 1000) * sampleRate);
-  const FLOOR_GAIN = 0.12;      // "chão" de ruído (não silencia 100%, evita efeito robótico)
+  // 2) Supressão de ruído + VAD (AudioWorklet quando suportado; ScriptProcessor como fallback)
+  const usingWorklet = await ensureWorkletModule(ctx);
+  let gateOutput;
+  if (usingWorklet) {
+    voiceGateNode = new AudioWorkletNode(ctx, 'voice-gate-processor', { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1 });
+    voiceGateNode.port.onmessage = (e) => {
+      meterState.floor = e.data.floor;
+      meterState.speaking = e.data.speaking;
+    };
+    voiceGateNode.port.postMessage({ type: 'config', mode: noiseMode });
+    noiseHighpass.connect(voiceGateNode);
+    gateOutput = voiceGateNode;
+  } else {
+    fallbackGateNode = createFallbackGateNode(ctx);
+    noiseHighpass.connect(fallbackGateNode);
+    gateOutput = fallbackGateNode;
+  }
 
-  // Coeficientes calculados como constantes de tempo reais (em ms), não "por amostra
-  // solta" — isso evita que o envelope/ganho oscile na mesma frequência da própria
-  // onda sonora, que é o que causava o chiado/crepitação durante a fala.
-  const timeConstCoef = (ms) => 1 - Math.exp(-1 / ((ms / 1000) * sampleRate));
-  const attackCoef = timeConstCoef(5);     // envelope reage à voz em ~5ms
-  const releaseCoef = timeConstCoef(120);  // envelope relaxa em ~120ms (sem tremular)
-  const gainUpCoef = timeConstCoef(8);     // porta abre suave em ~8ms
-  const gainDownCoef = timeConstCoef(180); // porta fecha suave em ~180ms
+  // 3) Compressor: nivela a voz (menos picos e vales de volume, sem robotizar)
+  compressorNode = ctx.createDynamicsCompressor();
+  compressorNode.threshold.value = -24;
+  compressorNode.knee.value = 12;
+  compressorNode.ratio.value = 3;
+  compressorNode.attack.value = 0.01;
+  compressorNode.release.value = 0.15;
 
-  let envelope = 0;
-  let currentGain = 1;
-  let holdCounter = 0;
-
-  noiseGateNode = ctx.createScriptProcessor(1024, 1, 1);
-  noiseGateNode.onaudioprocess = (e) => {
-    const input = e.inputBuffer.getChannelData(0);
-    const output = e.outputBuffer.getChannelData(0);
-    if (!noiseFilterOn) { output.set(input); return; }
-    for (let i = 0; i < input.length; i++) {
-      const level = Math.abs(input[i]);
-      envelope = level > envelope
-        ? envelope + (level - envelope) * attackCoef
-        : envelope + (level - envelope) * releaseCoef;
-
-      const speaking = envelope >= noiseGateThreshold;
-      if (speaking) holdCounter = holdSamplesMax;
-      else if (holdCounter > 0) holdCounter--;
-
-      const targetGain = (speaking || holdCounter > 0) ? 1 : FLOOR_GAIN;
-      currentGain += (targetGain - currentGain) * (targetGain > currentGain ? gainUpCoef : gainDownCoef);
-
-      output[i] = input[i] * currentGain;
-    }
-  };
+  // 4) Limiter: teto de segurança contra picos/clipping (normalização final)
+  limiterNode = ctx.createDynamicsCompressor();
+  limiterNode.threshold.value = -3;
+  limiterNode.knee.value = 0;
+  limiterNode.ratio.value = 20;
+  limiterNode.attack.value = 0.001;
+  limiterNode.release.value = 0.05;
 
   micGainNode = ctx.createGain();
   micGainNode.gain.value = micOn ? micVolumePercent / 100 : 0;
@@ -739,11 +974,15 @@ function setupMicGainChain(rawStream) {
   mixDestination = ctx.createMediaStreamDestination();
 
   source.connect(noiseHighpass);
-  noiseHighpass.connect(noiseGateNode);
-  noiseGateNode.connect(micGainNode);
+  gateOutput.connect(compressorNode);
+  compressorNode.connect(limiterNode);
+  limiterNode.connect(micGainNode);
   micGainNode.connect(mixDestination);
 
   micOutputStream = mixDestination.stream;
+
+  attachVolumeMeter(rawStream, 'tile-local');
+  startNoisePanelMeterLoop();
 }
 
 // Pluga o áudio da tela/aba compartilhada na MESMA saída do microfone,
@@ -767,18 +1006,29 @@ function detachScreenAudio() {
   if (screenAudioGain) { try { screenAudioGain.disconnect(); } catch (e) {} screenAudioGain = null; }
 }
 
-function applyNoiseFilterState() {
-  // O highpass é ligado/desligado de verdade (bypass completo quando off),
-  // e o gate lê noiseFilterOn a cada bloco de áudio — nada mais a fazer aqui.
-  if (noiseHighpass) noiseHighpass.frequency.value = noiseFilterOn ? 120 : 0;
+function setNoiseMode(mode) {
+  noiseMode = mode;
+  document.querySelectorAll('#noiseModes button').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  if (noiseHighpass) noiseHighpass.frequency.value = mode !== 'off' ? 120 : 0;
+  if (voiceGateNode) voiceGateNode.port.postMessage({ type: 'config', mode });
+  $('noiseBtn').classList.toggle('noise-on', mode !== 'off');
+  $('noiseBtn').textContent = mode !== 'off' ? '🔉' : '🔈';
 }
+document.querySelectorAll('#noiseModes button').forEach(b => {
+  b.onclick = () => {
+    setNoiseMode(b.dataset.mode);
+    toast(b.dataset.mode !== 'off' ? ("Supressão de ruído: " + b.dataset.mode.toUpperCase()) : "Supressão de ruído desativada");
+  };
+});
 
 $('noiseBtn').onclick = () => {
-  noiseFilterOn = !noiseFilterOn;
-  applyNoiseFilterState();
-  $('noiseBtn').classList.toggle('noise-on', noiseFilterOn);
-  $('noiseBtn').textContent = noiseFilterOn ? '🔉' : '🔈';
-  toast(noiseFilterOn ? "Filtro de ruído ativado" : "Filtro de ruído desativado (clique 2x pra ajustar sensibilidade)");
+  if (noiseMode === 'off') {
+    setNoiseMode(lastActiveNoiseMode);
+  } else {
+    lastActiveNoiseMode = noiseMode;
+    setNoiseMode('off');
+  }
+  toast(noiseMode !== 'off' ? ("Supressão de ruído: " + noiseMode.toUpperCase()) : "Supressão de ruído desativada");
 };
 
 $('noiseBtn').ondblclick = (e) => {
@@ -786,18 +1036,113 @@ $('noiseBtn').ondblclick = (e) => {
   $('noisePanel').classList.toggle('show');
 };
 
-// Fecha o painel de sensibilidade se clicar fora dele
+// Fecha o painel se clicar fora dele
 document.addEventListener('click', (e) => {
   if (e.target.id !== 'noiseBtn' && !$('noisePanel').contains(e.target)) {
     $('noisePanel').classList.remove('show');
   }
 });
 
-$('noiseSensitivity').oninput = (e) => {
-  // slider vai de 1 (capta mais / gate fraco) a 100 (corta mais / gate forte)
-  const t = Number(e.target.value) / 100;
-  noiseGateThreshold = 0.004 + t * 0.05;
-};
+// ---- Seleção de microfone ----
+async function refreshMicDeviceList() {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const mics = devices.filter(d => d.kind === 'audioinput');
+    const sel = $('micDeviceSelect');
+    if (!sel) return;
+    const current = selectedMicDeviceId || sel.value;
+    sel.innerHTML = '';
+    mics.forEach((d, i) => {
+      const opt = document.createElement('option');
+      opt.value = d.deviceId;
+      opt.textContent = d.label || ('Microfone ' + (i + 1));
+      sel.appendChild(opt);
+    });
+    if (mics.some(d => d.deviceId === current)) sel.value = current;
+  } catch (e) {}
+}
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', refreshMicDeviceList);
+}
+$('micDeviceSelect').onchange = (e) => { if (e.target.value) switchMicDevice(e.target.value); };
+
+async function switchMicDevice(deviceId) {
+  try {
+    toast("Trocando microfone...");
+    const constraints = Object.assign(micConstraints(), { deviceId: { exact: deviceId } });
+    const newStream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+    if (localStream) localStream.getTracks().forEach(t => t.stop());
+    localStream = newStream;
+    selectedMicDeviceId = deviceId;
+    hasMic = true;
+    await setupMicGainChain(localStream);
+    if (Object.keys(calls).length) rebuildAllCalls();
+    toast("Microfone trocado!");
+  } catch (e) {
+    toast("Não consegui trocar pra esse microfone.");
+  }
+}
+
+// ---- Medidores em tempo real (MIC / RUÍDO / VOZ) ----
+let noisePanelMeterRAF = null;
+function startNoisePanelMeterLoop() {
+  if (noisePanelMeterRAF) return;
+  function loop() {
+    if ($('noisePanel').classList.contains('show')) {
+      const micLevel = latestLevels['tile-local'] || 0;
+      const mm = $('meterMic'), mn = $('meterNoise'), mv = $('meterVoice');
+      if (mm) mm.style.width = Math.min(1, micLevel * 1.4) * 100 + '%';
+      if (mn) mn.style.width = Math.min(1, meterState.floor * 25) * 100 + '%';
+      if (mv) mv.style.width = (meterState.speaking ? Math.min(1, micLevel * 1.6) : Math.min(1, micLevel * 0.3)) * 100 + '%';
+    }
+    noisePanelMeterRAF = requestAnimationFrame(loop);
+  }
+  loop();
+}
+
+// ---- Teste de microfone: grava original x processado em paralelo (~3s) ----
+$('micTestBtn').onclick = runMicTest;
+async function runMicTest() {
+  if (!hasMic || !localStream) { toast("Ative o microfone primeiro."); return; }
+  const ctx = getAudioCtx();
+  const btn = $('micTestBtn');
+  btn.disabled = true;
+  btn.textContent = "🔴 Gravando 3s (fale, bata no teclado, ligue o ventilador)...";
+
+  const rawDest = ctx.createMediaStreamDestination();
+  const procDest = ctx.createMediaStreamDestination();
+  if (micTestRawSource) { try { micTestRawSource.disconnect(); } catch (e) {} }
+  micTestRawSource = ctx.createMediaStreamSource(localStream);
+  micTestRawSource.connect(rawDest);
+  if (limiterNode) limiterNode.connect(procDest);
+
+  const recA = new MediaRecorder(rawDest.stream);
+  const recB = new MediaRecorder(procDest.stream);
+  const chunksA = [], chunksB = [];
+  recA.ondataavailable = (e) => { if (e.data.size) chunksA.push(e.data); };
+  recB.ondataavailable = (e) => { if (e.data.size) chunksB.push(e.data); };
+  const doneA = new Promise((res) => { recA.onstop = res; });
+  const doneB = new Promise((res) => { recB.onstop = res; });
+
+  recA.start(); recB.start();
+  await new Promise((res) => setTimeout(res, 3000));
+  recA.stop(); recB.stop();
+  await Promise.all([doneA, doneB]);
+
+  try { micTestRawSource.disconnect(); } catch (e) {}
+  if (limiterNode) { try { limiterNode.disconnect(procDest); } catch (e) {} }
+
+  if (micTestOriginalUrl) URL.revokeObjectURL(micTestOriginalUrl);
+  if (micTestProcessedUrl) URL.revokeObjectURL(micTestProcessedUrl);
+  micTestOriginalUrl = URL.createObjectURL(new Blob(chunksA, { type: 'audio/webm' }));
+  micTestProcessedUrl = URL.createObjectURL(new Blob(chunksB, { type: 'audio/webm' }));
+
+  btn.disabled = false;
+  btn.textContent = "🎙️ Testar de novo";
+  $('micTestResult').style.display = 'block';
+}
+$('playOriginalBtn').onclick = () => { if (micTestOriginalUrl) new Audio(micTestOriginalUrl).play(); };
+$('playProcessedBtn').onclick = () => { if (micTestProcessedUrl) new Audio(micTestProcessedUrl).play(); };
 
 function outgoingStream() {
   // micOutputStream já sai com mic + áudio da tela (se houver) misturados num só trilho.
@@ -837,7 +1182,10 @@ function wireCall(call, name) {
       badge.style.display = 'block';
       tile.appendChild(badge);
     }
-    if (tile) addFullscreenBtn(tile, video).classList.toggle('show', hasVideo);
+    if (tile) {
+      addFullscreenBtn(tile, video).classList.toggle('show', hasVideo);
+      addPipBtn(tile, video).classList.toggle('show', hasVideo);
+    }
     attachVolumeMeter(remoteStream, 'tile-' + call.peer);
   });
   call.on('close', () => { removeRemoteTile(call.peer); delete calls[call.peer]; });
@@ -864,19 +1212,7 @@ $('micBtn').onclick = () => {
 $('screenBtn').onclick = async () => {
   if (!sharingScreen) {
     try {
-      screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: { ideal: 30, max: 30 } },
-        audio: {
-          // Esses três "true" são ótimos pro microfone, mas em áudio de tela
-          // (música, vídeo, som do sistema) eles pioram muito a qualidade —
-          // o navegador tenta "limpar" a voz e acaba distorcendo o som.
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          sampleRate: 48000,
-          channelCount: 2
-        }
-      });
+      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
     } catch (e) { return; }
     sharingScreen = true;
     const localTile = $('tile-local');
@@ -884,6 +1220,7 @@ $('screenBtn').onclick = async () => {
     localVideo.srcObject = screenStream;
     localVideo.classList.add('has-video');
     addFullscreenBtn(localTile, localVideo).classList.add('show');
+    addPipBtn(localTile, localVideo).classList.add('show');
     $('screenBtn').classList.add('active');
     attachScreenAudio(screenStream);
     rebuildAllCalls();
@@ -907,6 +1244,8 @@ function stopScreenShare() {
   localVideo.classList.remove('has-video');
   const localTile = $('tile-local');
   localTile?.querySelector('.fs-btn')?.classList.remove('show');
+  localTile?.querySelector('.pip-btn')?.classList.remove('show');
+  if (document.pictureInPictureElement === localVideo) document.exitPictureInPicture().catch(() => {});
   $('screenBtn').classList.remove('active');
   rebuildAllCalls();
   toast("Parou de compartilhar a tela");
